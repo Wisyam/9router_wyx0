@@ -183,11 +183,11 @@ export default function MergeConnectionsModal({ isOpen, onClose }) {
             <div className="grid grid-cols-5 gap-2">
               <div className="rounded-lg bg-bg border border-border p-2.5 text-center">
                 <p className="text-base font-bold text-text-main">{preview.summary.totalSource}</p>
-                <p className="text-[10px] text-text-muted">Source (wyx0)</p>
+                <p className="text-[10px] text-text-muted">Source</p>
               </div>
               <div className="rounded-lg bg-bg border border-border p-2.5 text-center">
                 <p className="text-base font-bold text-text-main">{preview.summary.totalTarget}</p>
-                <p className="text-[10px] text-text-muted">Target (bawaan)</p>
+                <p className="text-[10px] text-text-muted">Target</p>
               </div>
               <div className="rounded-lg bg-green-500/10 border border-green-500/20 p-2.5 text-center">
                 <p className="text-base font-bold text-green-600 dark:text-green-400">+{preview.summary.toAdd}</p>
