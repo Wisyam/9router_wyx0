@@ -180,24 +180,71 @@ export default function MergeConnectionsModal({ isOpen, onClose }) {
 
         {step === 2 && preview && (
           <>
-            <div className="grid grid-cols-4 gap-2">
-              <div className="rounded-lg bg-bg border border-border p-3 text-center">
-                <p className="text-lg font-bold text-text-main">{preview.summary.totalSource}</p>
-                <p className="text-[11px] text-text-muted">Source</p>
+            <div className="grid grid-cols-5 gap-2">
+              <div className="rounded-lg bg-bg border border-border p-2.5 text-center">
+                <p className="text-base font-bold text-text-main">{preview.summary.totalSource}</p>
+                <p className="text-[10px] text-text-muted">Source (wyx0)</p>
               </div>
-              <div className="rounded-lg bg-bg border border-border p-3 text-center">
-                <p className="text-lg font-bold text-text-main">{preview.summary.totalTarget}</p>
-                <p className="text-[11px] text-text-muted">Target</p>
+              <div className="rounded-lg bg-bg border border-border p-2.5 text-center">
+                <p className="text-base font-bold text-text-main">{preview.summary.totalTarget}</p>
+                <p className="text-[10px] text-text-muted">Target (bawaan)</p>
               </div>
-              <div className="rounded-lg bg-green-500/10 border border-green-500/20 p-3 text-center">
-                <p className="text-lg font-bold text-green-600 dark:text-green-400">{preview.summary.toAdd}</p>
-                <p className="text-[11px] text-green-600 dark:text-green-400">To Add</p>
+              <div className="rounded-lg bg-green-500/10 border border-green-500/20 p-2.5 text-center">
+                <p className="text-base font-bold text-green-600 dark:text-green-400">+{preview.summary.toAdd}</p>
+                <p className="text-[10px] text-green-600 dark:text-green-400">To Add</p>
               </div>
-              <div className="rounded-lg bg-bg border border-border p-3 text-center">
-                <p className="text-lg font-bold text-text-muted">{preview.summary.toSkip}</p>
-                <p className="text-[11px] text-text-muted">Duplicates</p>
+              <div className="rounded-lg bg-bg border border-border p-2.5 text-center">
+                <p className="text-base font-bold text-text-muted">{preview.summary.toSkip}</p>
+                <p className="text-[10px] text-text-muted">Duplicates</p>
+              </div>
+              <div className="rounded-lg bg-primary/10 border border-primary/20 p-2.5 text-center">
+                <p className="text-base font-bold text-primary">{preview.summary.afterMerge}</p>
+                <p className="text-[10px] text-primary">After Merge</p>
               </div>
             </div>
+
+            {preview.providerBreakdown?.length > 0 && (
+              <div className="overflow-auto rounded-lg border border-border">
+                <table className="w-full text-sm">
+                  <thead className="bg-bg">
+                    <tr className="border-b border-border text-left">
+                      <th className="px-3 py-2 text-xs font-medium text-text-muted">Provider</th>
+                      <th className="px-3 py-2 text-xs font-medium text-text-muted text-center">Source</th>
+                      <th className="px-3 py-2 text-xs font-medium text-text-muted text-center">Target</th>
+                      <th className="px-3 py-2 text-xs font-medium text-green-600 dark:text-green-400 text-center">+ Add</th>
+                      <th className="px-3 py-2 text-xs font-medium text-text-muted text-center">Skip</th>
+                      <th className="px-3 py-2 text-xs font-medium text-primary text-center">After</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {preview.providerBreakdown.map((row) => (
+                      <tr key={row.provider} className="border-b border-border/50 last:border-0">
+                        <td className="px-3 py-1.5 text-xs font-mono font-medium">{row.provider}</td>
+                        <td className="px-3 py-1.5 text-xs text-center">{row.source || <span className="text-text-muted">—</span>}</td>
+                        <td className="px-3 py-1.5 text-xs text-center">{row.target || <span className="text-text-muted">—</span>}</td>
+                        <td className="px-3 py-1.5 text-xs text-center text-green-600 dark:text-green-400 font-medium">
+                          {row.toAdd > 0 ? `+${row.toAdd}` : <span className="text-text-muted">—</span>}
+                        </td>
+                        <td className="px-3 py-1.5 text-xs text-center text-text-muted">
+                          {row.toSkip > 0 ? row.toSkip : "—"}
+                        </td>
+                        <td className="px-3 py-1.5 text-xs text-center font-bold text-primary">{row.afterMerge}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot className="bg-bg font-semibold">
+                    <tr className="border-t border-border">
+                      <td className="px-3 py-2 text-xs text-text-muted">Total</td>
+                      <td className="px-3 py-2 text-xs text-center">{preview.summary.totalSource}</td>
+                      <td className="px-3 py-2 text-xs text-center">{preview.summary.totalTarget}</td>
+                      <td className="px-3 py-2 text-xs text-center text-green-600 dark:text-green-400">+{preview.summary.toAdd}</td>
+                      <td className="px-3 py-2 text-xs text-center text-text-muted">{preview.summary.toSkip}</td>
+                      <td className="px-3 py-2 text-xs text-center text-primary">{preview.summary.afterMerge}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
 
             {preview.summary.toAdd === 0 ? (
               <div className="flex items-center gap-2 rounded-lg bg-bg border border-border px-3 py-4">
@@ -205,26 +252,32 @@ export default function MergeConnectionsModal({ isOpen, onClose }) {
                 <p className="text-sm text-text-muted">All accounts already exist in the target. Nothing to merge.</p>
               </div>
             ) : (
-              <div className="max-h-56 overflow-auto rounded-lg border border-border">
-                <table className="w-full text-sm">
-                  <thead className="sticky top-0 bg-bg">
-                    <tr className="border-b border-border text-left">
-                      <th className="px-3 py-2 text-xs font-medium text-text-muted">Status</th>
-                      <th className="px-3 py-2 text-xs font-medium text-text-muted">Provider</th>
-                      <th className="px-3 py-2 text-xs font-medium text-text-muted">Account</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {preview.details.map((d, i) => (
-                      <tr key={i} className="border-b border-border/50 last:border-0">
-                        <td className="px-3 py-1.5"><StatusPill action={d.action} /></td>
-                        <td className="px-3 py-1.5 text-xs font-mono">{d.provider}</td>
-                        <td className="px-3 py-1.5 text-xs truncate max-w-[180px]">{d.email || d.name || "—"}</td>
+              <details className="group">
+                <summary className="flex items-center gap-1 cursor-pointer text-xs text-text-muted hover:text-text-main transition-colors">
+                  <span className="material-symbols-outlined text-[16px] transition-transform group-open:rotate-90">chevron_right</span>
+                  Show {preview.details?.length || 0} account details
+                </summary>
+                <div className="mt-2 max-h-48 overflow-auto rounded-lg border border-border">
+                  <table className="w-full text-sm">
+                    <thead className="sticky top-0 bg-bg">
+                      <tr className="border-b border-border text-left">
+                        <th className="px-3 py-2 text-xs font-medium text-text-muted">Status</th>
+                        <th className="px-3 py-2 text-xs font-medium text-text-muted">Provider</th>
+                        <th className="px-3 py-2 text-xs font-medium text-text-muted">Account</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody>
+                      {preview.details.map((d, i) => (
+                        <tr key={i} className="border-b border-border/50 last:border-0">
+                          <td className="px-3 py-1.5"><StatusPill action={d.action} /></td>
+                          <td className="px-3 py-1.5 text-xs font-mono">{d.provider}</td>
+                          <td className="px-3 py-1.5 text-xs truncate max-w-[180px]">{d.email || d.name || "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </details>
             )}
 
             <div className="flex justify-end gap-2 pt-2 border-t border-border">

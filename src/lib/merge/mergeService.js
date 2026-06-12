@@ -125,6 +125,37 @@ export async function executeMerge({ targetDataDir, strategy, dryRun, providerFi
   const targetConns = await readConnectionsFromDb(targetDbPath);
   const { toAdd, toSkip } = diffConnections(sourceConns, targetConns);
 
+  const allProviders = new Set([
+    ...sourceConns.map((c) => c.provider),
+    ...targetConns.map((c) => c.provider),
+  ]);
+  const countByProvider = (conns) => {
+    const map = {};
+    for (const c of conns) map[c.provider] = (map[c.provider] || 0) + 1;
+    return map;
+  };
+  const sourceCount = countByProvider(sourceConns);
+  const targetCount = countByProvider(targetConns);
+  const addCount = countByProvider(toAdd);
+  const skipCount = countByProvider(toSkip);
+
+  const providerBreakdown = [...allProviders]
+    .sort((a, b) => (targetCount[b] || 0) - (targetCount[a] || 0))
+    .map((provider) => {
+      const src = sourceCount[provider] || 0;
+      const tgt = targetCount[provider] || 0;
+      const add = addCount[provider] || 0;
+      const skip = skipCount[provider] || 0;
+      return {
+        provider,
+        source: src,
+        target: tgt,
+        toAdd: add,
+        toSkip: skip,
+        afterMerge: tgt + add,
+      };
+    });
+
   const report = {
     timestamp: new Date().toISOString(),
     targetDataDir: validation.dataDir,
@@ -136,7 +167,9 @@ export async function executeMerge({ targetDataDir, strategy, dryRun, providerFi
       totalTarget: targetConns.length,
       toAdd: toAdd.length,
       toSkip: toSkip.length,
+      afterMerge: targetConns.length + toAdd.length,
     },
+    providerBreakdown,
     details: [
       ...toAdd.map((c) => ({
         provider: c.provider,
