@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { Card, Button, Toggle, Input } from "@/shared/components";
+import { Card, Button, Toggle, Input, MergeConnectionsModal } from "@/shared/components";
 import { ConfirmModal } from "@/shared/components/Modal";
 import LanguageSwitcher from "@/shared/components/LanguageSwitcher";
 import { useTheme } from "@/shared/hooks/useTheme";
@@ -26,6 +26,7 @@ export default function ProfilePage() {
   const [locale, setLocale] = useState("en");
   const [langOpen, setLangOpen] = useState(false);
   const [shutdownOpen, setShutdownOpen] = useState(false);
+  const [mergeOpen, setMergeOpen] = useState(false);
   const [isShuttingDown, setIsShuttingDown] = useState(false);
   const [settings, setSettings] = useState({ fallbackStrategy: "fill-first" });
   const [loading, setLoading] = useState(true);
@@ -623,6 +624,14 @@ export default function ProfilePage() {
               >
                 Import Backup
               </Button>
+              <Button
+                variant="outline"
+                icon="merge_type"
+                onClick={() => setMergeOpen(true)}
+                className="w-full sm:w-auto"
+              >
+                Merge to Instance
+              </Button>
               <input
                 ref={importFileRef}
                 type="file"
@@ -1134,6 +1143,10 @@ export default function ProfilePage() {
         cancelText="Cancel"
         variant="danger"
         loading={isShuttingDown}
+      />
+      <MergeConnectionsModal
+        isOpen={mergeOpen}
+        onClose={() => setMergeOpen(false)}
       />
     </div>
   );

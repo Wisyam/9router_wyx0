@@ -1,20 +1,29 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import Badge from "./Badge";
+import Modal from "./Modal";
 import Button from "./Button";
 import Input from "./Input";
-import Modal from "./Modal";
+import { cn } from "@/shared/utils/cn";
 
-function ActionBadge({ action }) {
-  const variants = { add: "success", skip: "default" };
-  const labels = { add: "NEW", skip: "SKIP" };
-  return <Badge variant={variants[action] || "default"} size="sm">{labels[action] || action}</Badge>;
+function StatusPill({ action }) {
+  if (action === "add") {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-green-500/10 px-2 py-0.5 text-xs font-medium text-green-600 dark:text-green-400">
+        <span className="material-symbols-outlined text-[14px]">add_circle</span>
+        New
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-black/5 dark:bg-white/5 px-2 py-0.5 text-xs font-medium text-text-muted">
+      <span className="material-symbols-outlined text-[14px]">skip_next</span>
+      Skip
+    </span>
+  );
 }
 
-ActionBadge.displayName = "ActionBadge";
-
-export default function MergeConnectionsModal({ isOpen, onClose, onSuccess }) {
+export default function MergeConnectionsModal({ isOpen, onClose }) {
   const [step, setStep] = useState(1);
   const [targetDir, setTargetDir] = useState("");
   const [detecting, setDetecting] = useState(false);
@@ -96,165 +105,185 @@ export default function MergeConnectionsModal({ isOpen, onClose, onSuccess }) {
       if (!res.ok) throw new Error(data.error || "Merge failed");
       setResult(data);
       setStep(3);
-      if (onSuccess) onSuccess(data);
     } catch (err) {
       setError(err.message);
     } finally {
       setExecuting(false);
     }
-  }, [targetDir, onSuccess]);
-
-  const footer = (
-    <div className="flex justify-end gap-2">
-      {step === 1 && (
-        <>
-          <Button variant="ghost" onClick={handleClose}>Cancel</Button>
-          <Button variant="primary" onClick={handlePreview} disabled={!targetDir.trim() || loading}>
-            {loading ? "Scanning..." : "Preview Merge"}
-          </Button>
-        </>
-      )}
-      {step === 2 && (
-        <>
-          <Button variant="ghost" onClick={() => setStep(1)}>Back</Button>
-          <Button
-            variant="primary"
-            onClick={handleExecute}
-            disabled={executing || !preview?.summary?.toAdd}
-          >
-            {executing ? "Merging..." : `Merge ${preview?.summary?.toAdd || 0} Connections`}
-          </Button>
-        </>
-      )}
-      {step === 3 && (
-        <Button variant="primary" onClick={handleClose}>Done</Button>
-      )}
-    </div>
-  );
+  }, [targetDir]);
 
   return (
-    <Modal isOpen={isOpen} onClose={handleClose} title="Merge Connections to Another Instance" size="xl" footer={footer}>
-      {error && (
-        <div className="mb-3 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
-          {error}
-        </div>
-      )}
-
-      {step === 1 && (
-        <div className="space-y-4">
-          <p className="text-sm text-fg-muted">
-            Merge provider connections from this instance to another 9router running on the same machine.
-            Duplicates (same provider + email) will be skipped automatically.
-          </p>
-
-          <div className="flex items-end gap-2">
-            <div className="flex-1">
-              <Input
-                label="Target 9router DATA_DIR"
-                placeholder="e.g. C:\Users\akbar\AppData\Roaming\9router"
-                value={targetDir}
-                onChange={(e) => setTargetDir(e.target.value)}
-              />
-            </div>
-            <Button variant="ghost" size="sm" onClick={handleDetect} disabled={detecting}>
-              {detecting ? "Detecting..." : "Auto-Detect"}
-            </Button>
+    <Modal isOpen={isOpen} onClose={handleClose} title="Merge Connections" size="lg">
+      <div className="flex flex-col gap-4">
+        {error && (
+          <div className="flex items-start gap-2 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2">
+            <span className="material-symbols-outlined text-[18px] text-red-500 mt-0.5 shrink-0">error</span>
+            <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
           </div>
+        )}
 
-          {detected.length > 0 && (
-            <div className="space-y-1">
-              <p className="text-xs font-medium text-fg-muted">Detected instances:</p>
-              {detected.map((inst) => (
-                <button
-                  key={inst.dataDir}
-                  type="button"
-                  className="w-full rounded border border-border px-3 py-2 text-left text-sm hover:border-primary/40 hover:bg-primary/5"
-                  onClick={() => setTargetDir(inst.dataDir)}
-                >
-                  <span className="font-mono text-xs">{inst.dataDir}</span>
-                  <span className="ml-2 text-xs text-fg-muted">({inst.label})</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {step === 2 && preview && (
-        <div className="space-y-3">
-          <div className="flex gap-4 rounded-lg border border-border bg-surface px-4 py-3">
-            <div className="text-center">
-              <div className="text-lg font-bold text-fg">{preview.summary.totalSource}</div>
-              <div className="text-xs text-fg-muted">Source</div>
-            </div>
-            <div className="text-center">
-              <div className="text-lg font-bold text-fg">{preview.summary.totalTarget}</div>
-              <div className="text-xs text-fg-muted">Target (existing)</div>
-            </div>
-            <div className="text-center">
-              <div className="text-lg font-bold text-success">{preview.summary.toAdd}</div>
-              <div className="text-xs text-success">To Add</div>
-            </div>
-            <div className="text-center">
-              <div className="text-lg font-bold text-fg-muted">{preview.summary.toSkip}</div>
-              <div className="text-xs text-fg-muted">Duplicates</div>
-            </div>
-          </div>
-
-          {preview.summary.toAdd === 0 && (
-            <p className="text-sm text-fg-muted">
-              No new connections to merge — all accounts already exist in the target instance.
+        {step === 1 && (
+          <>
+            <p className="text-sm text-text-muted">
+              Transfer provider connections to another 9router instance on this machine.
+              Duplicate accounts (same provider + email) are skipped automatically.
             </p>
-          )}
 
-          {preview.details?.length > 0 && (
-            <div className="max-h-64 overflow-auto rounded-lg border border-border">
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-surface">
-                  <tr className="border-b border-border text-left text-xs text-fg-muted">
-                    <th className="px-3 py-2">Action</th>
-                    <th className="px-3 py-2">Provider</th>
-                    <th className="px-3 py-2">Email / Name</th>
-                    <th className="px-3 py-2">Type</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {preview.details.map((d, i) => (
-                    <tr key={i} className="border-b border-border/50 last:border-0">
-                      <td className="px-3 py-1.5"><ActionBadge action={d.action} /></td>
-                      <td className="px-3 py-1.5 font-mono text-xs">{d.provider}</td>
-                      <td className="px-3 py-1.5">{d.email || d.name || "—"}</td>
-                      <td className="px-3 py-1.5 text-xs text-fg-muted">{d.authType}</td>
+            <div className="flex flex-col gap-2">
+              <label className="text-sm font-medium text-text-main">Target DATA_DIR</label>
+              <div className="flex gap-2">
+                <Input
+                  placeholder="e.g. C:\Users\akbar\AppData\Roaming\9router"
+                  value={targetDir}
+                  onChange={(e) => setTargetDir(e.target.value)}
+                  className="flex-1"
+                />
+                <Button variant="outline" size="sm" icon="radar" onClick={handleDetect} loading={detecting}>
+                  Detect
+                </Button>
+              </div>
+            </div>
+
+            {detected.length > 0 && (
+              <div className="flex flex-col gap-1.5">
+                <p className="text-xs font-medium text-text-muted">Detected instances:</p>
+                {detected.map((inst) => (
+                  <button
+                    key={inst.dataDir}
+                    type="button"
+                    onClick={() => setTargetDir(inst.dataDir)}
+                    className={cn(
+                      "flex items-center gap-2 w-full rounded-lg border px-3 py-2.5 text-left text-sm transition-colors",
+                      targetDir === inst.dataDir
+                        ? "border-primary bg-primary/5 text-text-main"
+                        : "border-border bg-bg hover:border-primary/40"
+                    )}
+                  >
+                    <span className="material-symbols-outlined text-[18px] text-text-muted shrink-0">folder</span>
+                    <div className="min-w-0 flex-1">
+                      <p className="font-mono text-xs truncate">{inst.dataDir}</p>
+                      <p className="text-[11px] text-text-muted">{inst.label}</p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-border">
+              <Button variant="ghost" onClick={handleClose}>Cancel</Button>
+              <Button variant="primary" icon="search" onClick={handlePreview} loading={loading} disabled={!targetDir.trim()}>
+                Preview Merge
+              </Button>
+            </div>
+          </>
+        )}
+
+        {step === 2 && preview && (
+          <>
+            <div className="grid grid-cols-4 gap-2">
+              <div className="rounded-lg bg-bg border border-border p-3 text-center">
+                <p className="text-lg font-bold text-text-main">{preview.summary.totalSource}</p>
+                <p className="text-[11px] text-text-muted">Source</p>
+              </div>
+              <div className="rounded-lg bg-bg border border-border p-3 text-center">
+                <p className="text-lg font-bold text-text-main">{preview.summary.totalTarget}</p>
+                <p className="text-[11px] text-text-muted">Target</p>
+              </div>
+              <div className="rounded-lg bg-green-500/10 border border-green-500/20 p-3 text-center">
+                <p className="text-lg font-bold text-green-600 dark:text-green-400">{preview.summary.toAdd}</p>
+                <p className="text-[11px] text-green-600 dark:text-green-400">To Add</p>
+              </div>
+              <div className="rounded-lg bg-bg border border-border p-3 text-center">
+                <p className="text-lg font-bold text-text-muted">{preview.summary.toSkip}</p>
+                <p className="text-[11px] text-text-muted">Duplicates</p>
+              </div>
+            </div>
+
+            {preview.summary.toAdd === 0 ? (
+              <div className="flex items-center gap-2 rounded-lg bg-bg border border-border px-3 py-4">
+                <span className="material-symbols-outlined text-text-muted">check_circle</span>
+                <p className="text-sm text-text-muted">All accounts already exist in the target. Nothing to merge.</p>
+              </div>
+            ) : (
+              <div className="max-h-56 overflow-auto rounded-lg border border-border">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-bg">
+                    <tr className="border-b border-border text-left">
+                      <th className="px-3 py-2 text-xs font-medium text-text-muted">Status</th>
+                      <th className="px-3 py-2 text-xs font-medium text-text-muted">Provider</th>
+                      <th className="px-3 py-2 text-xs font-medium text-text-muted">Account</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      )}
+                  </thead>
+                  <tbody>
+                    {preview.details.map((d, i) => (
+                      <tr key={i} className="border-b border-border/50 last:border-0">
+                        <td className="px-3 py-1.5"><StatusPill action={d.action} /></td>
+                        <td className="px-3 py-1.5 text-xs font-mono">{d.provider}</td>
+                        <td className="px-3 py-1.5 text-xs truncate max-w-[180px]">{d.email || d.name || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
 
-      {step === 3 && result && (
-        <div className="space-y-3">
-          <div className="rounded-lg border border-success/30 bg-success/10 px-4 py-3">
-            <p className="font-medium text-success">
-              Merge complete! {result.summary.toAdd} connection{result.summary.toAdd !== 1 ? "s" : ""} added.
-            </p>
-          </div>
-          {result.backupPath && (
-            <p className="text-xs text-fg-muted">
-              Backup saved: <span className="font-mono">{result.backupPath}</span>
-            </p>
-          )}
-          {result.errors?.length > 0 && (
-            <div className="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
-              {result.errors.map((e, i) => <p key={i}>{e}</p>)}
+            <div className="flex justify-end gap-2 pt-2 border-t border-border">
+              <Button variant="ghost" onClick={() => setStep(1)}>Back</Button>
+              <Button
+                variant="primary"
+                icon="merge_type"
+                onClick={handleExecute}
+                loading={executing}
+                disabled={!preview.summary.toAdd}
+              >
+                Merge {preview.summary.toAdd} Connection{preview.summary.toAdd !== 1 ? "s" : ""}
+              </Button>
             </div>
-          )}
-        </div>
-      )}
+          </>
+        )}
+
+        {step === 3 && result && (
+          <>
+            <div className={cn(
+              "flex items-start gap-3 rounded-lg border px-4 py-3",
+              result.errors?.length ? "border-red-500/20 bg-red-500/10" : "border-green-500/20 bg-green-500/10"
+            )}>
+              <span className={cn(
+                "material-symbols-outlined text-[22px] mt-0.5 shrink-0",
+                result.errors?.length ? "text-red-500" : "text-green-500"
+              )}>
+                {result.errors?.length ? "warning" : "check_circle"}
+              </span>
+              <div>
+                <p className={cn(
+                  "font-medium text-sm",
+                  result.errors?.length ? "text-red-600 dark:text-red-400" : "text-green-600 dark:text-green-400"
+                )}>
+                  {result.errors?.length
+                    ? "Merge completed with errors"
+                    : `Successfully merged ${result.summary.toAdd} connection${result.summary.toAdd !== 1 ? "s" : ""}!`}
+                </p>
+                {result.errors?.map((e, i) => (
+                  <p key={i} className="text-xs text-red-500 mt-1">{e}</p>
+                ))}
+              </div>
+            </div>
+
+            {result.backupPath && (
+              <div className="flex items-start gap-2 rounded-lg bg-bg border border-border px-3 py-2">
+                <span className="material-symbols-outlined text-[16px] text-text-muted mt-0.5 shrink-0">backup</span>
+                <p className="text-xs text-text-muted">
+                  Backup saved: <span className="font-mono break-all">{result.backupPath}</span>
+                </p>
+              </div>
+            )}
+
+            <div className="flex justify-end pt-2 border-t border-border">
+              <Button variant="primary" onClick={handleClose}>Done</Button>
+            </div>
+          </>
+        )}
+      </div>
     </Modal>
   );
 }
-
-MergeConnectionsModal.displayName = "MergeConnectionsModal";
