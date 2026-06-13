@@ -25,7 +25,8 @@
   ],
   "scripts": {
     "dev": "next dev --webpack --port 20128",
-    "build": "next build --webpack",
+    "build": "node ./scripts/build.mjs",
+    "build:raw": "next build --webpack",
     "start": "node ./scripts/start-standalone.mjs",
     "dev:bun": "bun --bun next dev --webpack --port 20128",
     "build:bun": "bun --bun next build --webpack",
