@@ -29,6 +29,81 @@ function fingerprint(conn) {
   return `${conn.provider}::${conn.id}`;
 }
 
+/**
+ * Heuristic plan/health inference from connection row data.
+ * No network calls — purely reads existing fields written by runtime
+ * (testStatus, lastError, errorCode, modelLock_*, lastUsedAt).
+ *
+ * Returns:
+ *   { tier: "pro"|"trial"|"unknown"|"failed", source: "stored"|"heuristic", note: string }
+ *
+ * Currently specialised for "qoder" (since that is the provider where plan
+ * tier matters most). Other providers fall back to passive testStatus.
+ */
+export function inferPlanHeuristic(conn) {
+  if (!conn) return { tier: "unknown", source: "heuristic", note: "" };
+
+  // 1) If a stored planTier exists (e.g. populated by qoderBulkImportManager
+  //    on login), trust it. Normalise common synonyms.
+  const storedTier = (conn.providerSpecificData?.planTier || "").toLowerCase().trim();
+  if (storedTier) {
+    if (storedTier === "pro" || storedTier === "premium" || storedTier === "paid") {
+      return { tier: "pro", source: "stored", note: storedTier };
+    }
+    if (storedTier === "basic" || storedTier === "trial" || storedTier === "free") {
+      return { tier: "trial", source: "stored", note: storedTier };
+    }
+    return { tier: "unknown", source: "stored", note: storedTier };
+  }
+
+  // 2) Heuristic for provider=qoder based on runtime signals
+  if (conn.provider === "qoder") {
+    const status = (conn.testStatus || "").toLowerCase();
+    const errCode = conn.errorCode;
+    const errText = (conn.lastError || "").toLowerCase();
+
+    // Plan/paywall markers in the last error
+    const planErrorPattern = /(plan|subscription|upgrade|premium|pro\s*tier|trial\s*expired|payment|paywall|insufficient.*quota|free.*plan)/i;
+    if (planErrorPattern.test(errText) || errCode === 402 || errCode === 403) {
+      return { tier: "trial", source: "heuristic", note: "plan-error" };
+    }
+
+    // modelLock signal: locked premium models but qwen still free
+    const lockKeys = Object.keys(conn).filter((k) => k.startsWith("modelLock_"));
+    const now = Date.now();
+    const activeLocks = lockKeys
+      .map((k) => ({ k, until: conn[k] }))
+      .filter((l) => l.until && new Date(l.until).getTime() > now);
+    const premiumLocked = activeLocks.some((l) => /claude|gpt|o1|o3|sonnet|opus|haiku/i.test(l.k));
+    const qwenLocked = activeLocks.some((l) => /qwen/i.test(l.k));
+    if (premiumLocked && !qwenLocked) {
+      return { tier: "trial", source: "heuristic", note: "premium-locked" };
+    }
+
+    if (status === "unavailable" || status === "rate_limited") {
+      return { tier: "failed", source: "heuristic", note: status };
+    }
+
+    if (status === "active" && (conn.consecutiveUseCount || 0) > 0) {
+      // Has been used successfully at least once with no plan-related lock
+      return { tier: "pro", source: "heuristic", note: "used-ok" };
+    }
+
+    // Active but never used — too early to tell
+    if (status === "active") {
+      return { tier: "unknown", source: "heuristic", note: "untested" };
+    }
+
+    return { tier: "unknown", source: "heuristic", note: status || "no-signal" };
+  }
+
+  // Generic fallback for non-qoder providers
+  const status = (conn.testStatus || "").toLowerCase();
+  if (status === "unavailable") return { tier: "failed", source: "heuristic", note: status };
+  if (status === "active") return { tier: "pro", source: "heuristic", note: status };
+  return { tier: "unknown", source: "heuristic", note: status || "no-signal" };
+}
+
 async function openExternalDb(dbPath, { readonly = false } = {}) {
   let Database;
   try {
@@ -193,16 +268,24 @@ function buildReport({ direction, externalDataDir, externalDbFile, strategy, dry
     },
     providerBreakdown,
     details: [
-      ...toAdd.map((c) => ({
-        provider: c.provider,
-        email: c.email || null,
-        name: c.name || null,
-        authType: c.authType,
-        action: "add",
-        newId: c._newId !== c.id ? c._newId : null,
-        reason: c._reason,
-        fingerprint: fingerprint(c),
-      })),
+      ...toAdd.map((c) => {
+        const plan = inferPlanHeuristic(c);
+        return {
+          provider: c.provider,
+          email: c.email || null,
+          name: c.name || null,
+          authType: c.authType,
+          action: "add",
+          newId: c._newId !== c.id ? c._newId : null,
+          reason: c._reason,
+          fingerprint: fingerprint(c),
+          // Heuristic snapshot — UI can override via probe-plans endpoint
+          planTier: plan.tier,
+          planSource: plan.source,
+          planNote: plan.note,
+          testStatus: c.testStatus || null,
+        };
+      }),
       ...toSkip,
     ],
     backupPath: null,
@@ -382,6 +465,110 @@ export async function executeMerge(opts) {
   }
 
   return report;
+}
+
+/**
+ * Read a list of qoder connections (with their accessToken) from the merge
+ * source side. Used by the live plan-probe endpoint so we never need to leak
+ * tokens through the preview response.
+ *
+ * @param {Object} opts
+ * @param {"push"|"pull"} opts.direction
+ * @param {string} opts.externalDataDir
+ * @param {string[]} [opts.fingerprints] - if provided, only return rows whose fingerprint matches
+ */
+export async function readQoderTokensForProbe({ direction, externalDataDir, fingerprints }) {
+  const dir = direction === "pull" ? "pull" : "push";
+  let conns;
+  if (dir === "pull") {
+    const validation = validateDataDir(externalDataDir);
+    if (!validation.valid) throw new Error(validation.reason);
+    conns = await readConnectionsFromExternalDb(validation.dbFile);
+  } else {
+    conns = await getProviderConnections();
+  }
+
+  let qoderConns = conns.filter((c) => c.provider === "qoder");
+  if (Array.isArray(fingerprints) && fingerprints.length > 0) {
+    const want = new Set(fingerprints);
+    qoderConns = qoderConns.filter((c) => want.has(fingerprint(c)));
+  }
+  return qoderConns.map((c) => ({
+    fingerprint: fingerprint(c),
+    id: c.id,
+    email: c.email || null,
+    accessToken: c.accessToken || null,
+    expiresAt: c.expiresAt || null,
+    storedPlanTier: c.providerSpecificData?.planTier || "",
+  }));
+}
+
+/**
+ * Persist a probed planTier back into the source DB so future opens are
+ * instant. No-op if writing fails (best effort, side effect only).
+ *
+ * @param {Object} opts
+ * @param {"push"|"pull"} opts.direction
+ * @param {string} opts.externalDataDir
+ * @param {Array<{id: string, planTier: string, planStatus?: string}>} opts.updates
+ */
+export async function persistProbedPlanTiers({ direction, externalDataDir, updates }) {
+  if (!Array.isArray(updates) || updates.length === 0) return { written: 0 };
+  const dir = direction === "pull" ? "pull" : "push";
+  const probedAt = new Date().toISOString();
+
+  if (dir === "pull") {
+    // Source = external DB → write directly via better-sqlite3
+    const validation = validateDataDir(externalDataDir);
+    if (!validation.valid) throw new Error(validation.reason);
+    const db = await openExternalDb(validation.dbFile);
+    let written = 0;
+    try {
+      const select = db.prepare("SELECT data FROM providerConnections WHERE id = ?");
+      const update = db.prepare("UPDATE providerConnections SET data = ?, updatedAt = ? WHERE id = ?");
+      const tx = db.transaction(() => {
+        for (const u of updates) {
+          const row = select.get(u.id);
+          if (!row) continue;
+          const data = parseJson(row.data, {});
+          const psd = data.providerSpecificData || {};
+          psd.planTier = u.planTier || "";
+          if (u.planStatus) psd.planStatus = u.planStatus;
+          psd.planTierProbedAt = probedAt;
+          data.providerSpecificData = psd;
+          update.run(stringifyJson(data), new Date().toISOString(), u.id);
+          written++;
+        }
+      });
+      tx();
+      try { db.pragma("wal_checkpoint(TRUNCATE)"); } catch {}
+    } finally {
+      db.close();
+    }
+    return { written };
+  }
+
+  // Source = local DB → use active adapter
+  const adapter = await getAdapter();
+  let written = 0;
+  adapter.transaction(() => {
+    for (const u of updates) {
+      const row = adapter.get("SELECT data FROM providerConnections WHERE id = ?", [u.id]);
+      if (!row) continue;
+      const data = parseJson(row.data, {});
+      const psd = data.providerSpecificData || {};
+      psd.planTier = u.planTier || "";
+      if (u.planStatus) psd.planStatus = u.planStatus;
+      psd.planTierProbedAt = probedAt;
+      data.providerSpecificData = psd;
+      adapter.run(
+        "UPDATE providerConnections SET data = ?, updatedAt = ? WHERE id = ?",
+        [stringifyJson(data), new Date().toISOString(), u.id],
+      );
+      written++;
+    }
+  });
+  return { written };
 }
 
 export function saveMergeReport(report) {

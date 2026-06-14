@@ -23,6 +23,50 @@ function StatusPill({ action }) {
   );
 }
 
+function PlanPill({ tier, source, note }) {
+  // tier: "pro" | "trial" | "failed" | "unknown"
+  const map = {
+    pro: {
+      label: "Pro",
+      icon: "verified",
+      cls: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+    },
+    trial: {
+      label: "Trial",
+      icon: "warning",
+      cls: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
+    },
+    failed: {
+      label: "Failed",
+      icon: "error",
+      cls: "bg-red-500/10 text-red-600 dark:text-red-400",
+    },
+    unknown: {
+      label: "Unknown",
+      icon: "help",
+      cls: "bg-black/5 dark:bg-white/5 text-text-muted",
+    },
+  };
+  const m = map[tier] || map.unknown;
+  const title = [
+    source === "stored" ? "from DB" : source === "probe" ? "probed live" : "heuristic",
+    note,
+  ].filter(Boolean).join(" • ");
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium",
+        m.cls,
+      )}
+      title={title}
+    >
+      <span className="material-symbols-outlined text-[12px]">{m.icon}</span>
+      {m.label}
+      {source === "probe" && <span className="opacity-60">●</span>}
+    </span>
+  );
+}
+
 export default function MergeConnectionsModal({ isOpen, onClose }) {
   const [step, setStep] = useState(1);
   const [direction, setDirection] = useState("push"); // "push" = this → other, "pull" = other → this
@@ -37,6 +81,12 @@ export default function MergeConnectionsModal({ isOpen, onClose }) {
   // Set of fingerprints that user has UN-checked (will be excluded from execute)
   const [excluded, setExcluded] = useState(() => new Set());
 
+  // Live probe results: fingerprint → { tier, source: "probe", note, status }
+  // Overrides the heuristic from the preview when present.
+  const [probeMap, setProbeMap] = useState(() => new Map());
+  const [probing, setProbing] = useState(false);
+  const [probeProgress, setProbeProgress] = useState({ done: 0, total: 0, ok: 0, persisted: 0 });
+
   const reset = useCallback(() => {
     setStep(1);
     setDirection("push");
@@ -48,11 +98,17 @@ export default function MergeConnectionsModal({ isOpen, onClose }) {
     setResult(null);
     setError(null);
     setExcluded(new Set());
+    setProbeMap(new Map());
+    setProbing(false);
+    setProbeProgress({ done: 0, total: 0, ok: 0, persisted: 0 });
   }, []);
 
   // Whenever a new preview arrives, reset selection so that all "add" items are checked by default
   useEffect(() => {
-    if (preview) setExcluded(new Set());
+    if (preview) {
+      setExcluded(new Set());
+      setProbeMap(new Map());
+    }
   }, [preview]);
 
   // Derived stats based on current exclusion
@@ -85,6 +141,122 @@ export default function MergeConnectionsModal({ isOpen, onClose }) {
       setExcluded(new Set());
     }
   }, [addRows, allSelected]);
+
+  // Number of qoder accounts in the to-add list — used to gate the probe button
+  const qoderAddCount = useMemo(
+    () => addRows.filter((d) => d.provider === "qoder").length,
+    [addRows],
+  );
+
+  // Effective plan info per row: live probe overrides heuristic when present
+  const effectivePlan = useCallback((row) => {
+    const live = probeMap.get(row.fingerprint);
+    if (live) {
+      return { tier: live.tier, source: "probe", note: live.note || live.status || "" };
+    }
+    return {
+      tier: row.planTier || "unknown",
+      source: row.planSource || "heuristic",
+      note: row.planNote || "",
+    };
+  }, [probeMap]);
+
+  const handleProbePlans = useCallback(async () => {
+    if (probing || !preview || qoderAddCount === 0) return;
+    setProbing(true);
+    setError(null);
+    setProbeProgress({ done: 0, total: qoderAddCount, ok: 0, persisted: 0 });
+
+    // Only probe currently-checked qoder rows (user might have unchecked some)
+    const fps = addRows
+      .filter((d) => d.provider === "qoder" && !excluded.has(d.fingerprint))
+      .map((d) => d.fingerprint);
+
+    if (fps.length === 0) {
+      setProbing(false);
+      return;
+    }
+
+    try {
+      const res = await fetch("/api/sync/merge-to-target/probe-plans", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          direction,
+          externalDataDir: targetDir.trim(),
+          fingerprints: fps,
+          persist: true,
+        }),
+      });
+      if (!res.ok || !res.body) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(`Probe failed (${res.status}) ${txt}`);
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let done = 0;
+      let ok = 0;
+      let total = fps.length;
+      let persisted = 0;
+
+      while (true) {
+        const { value, done: readerDone } = await reader.read();
+        if (readerDone) break;
+        buffer += decoder.decode(value, { stream: true });
+        let nl;
+        while ((nl = buffer.indexOf("\n")) >= 0) {
+          const line = buffer.slice(0, nl).trim();
+          buffer = buffer.slice(nl + 1);
+          if (!line) continue;
+          let evt;
+          try { evt = JSON.parse(line); } catch { continue; }
+          if (evt.type === "start") {
+            total = evt.total || total;
+          } else if (evt.type === "result") {
+            done++;
+            if (evt.ok) ok++;
+            setProbeMap((prev) => {
+              const next = new Map(prev);
+              next.set(evt.fingerprint, {
+                tier: evt.tier || "unknown",
+                planTierRaw: evt.planTierRaw || "",
+                status: evt.status || "",
+                ok: !!evt.ok,
+                error: evt.error || null,
+                note: evt.ok ? (evt.planTierRaw || "probed") : (evt.error || "failed"),
+              });
+              return next;
+            });
+            setProbeProgress({ done, total, ok, persisted });
+          } else if (evt.type === "done") {
+            persisted = evt.persisted || 0;
+            setProbeProgress({ done: evt.total || done, total: evt.total || total, ok: evt.ok || ok, persisted });
+          } else if (evt.type === "warn") {
+            // Non-fatal warning (e.g. persist failed)
+            console.warn("[merge-probe]", evt.message);
+          }
+        }
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setProbing(false);
+    }
+  }, [probing, preview, qoderAddCount, addRows, excluded, direction, targetDir]);
+
+  const exclTrialAuto = useCallback(() => {
+    // Convenience: auto-uncheck all rows with effective plan = trial or failed
+    const next = new Set(excluded);
+    for (const row of addRows) {
+      const p = effectivePlan(row);
+      if (p.tier === "trial" || p.tier === "failed") {
+        next.add(row.fingerprint);
+      }
+    }
+    setExcluded(next);
+  }, [addRows, effectivePlan, excluded]);
 
   const handleClose = useCallback(() => {
     reset();
@@ -377,7 +549,56 @@ export default function MergeConnectionsModal({ isOpen, onClose }) {
                     </span>
                   )}
                 </summary>
-                <div className="mt-2 max-h-64 overflow-auto rounded-lg border border-border">
+
+                {/* Plan-probe toolbar (qoder only) */}
+                {qoderAddCount > 0 && (
+                  <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-bg/50 p-2">
+                    <span className="material-symbols-outlined text-[16px] text-text-muted">verified_user</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[11px] text-text-muted">
+                        {probing ? (
+                          <>Probing qoder plans… <span className="font-mono">{probeProgress.done}/{probeProgress.total}</span> ({probeProgress.ok} ok)</>
+                        ) : probeMap.size > 0 ? (
+                          <>Probed <span className="font-mono">{probeProgress.ok}</span>/{probeProgress.total} qoder accounts{probeProgress.persisted > 0 ? `, persisted ${probeProgress.persisted}` : ""}.</>
+                        ) : (
+                          <>Plan tiers below are <span className="font-medium text-text-main">heuristic</span>. Probe live for accurate values.</>
+                        )}
+                      </p>
+                      {probing && (
+                        <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-border">
+                          <div
+                            className="h-full bg-primary transition-all"
+                            style={{ width: `${probeProgress.total ? Math.round((probeProgress.done / probeProgress.total) * 100) : 0}%` }}
+                          />
+                        </div>
+                      )}
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      icon={probing ? "hourglass_empty" : "wifi_tethering"}
+                      onClick={handleProbePlans}
+                      loading={probing}
+                      disabled={probing || qoderAddCount === 0}
+                    >
+                      {probeMap.size > 0 ? "Re-probe" : "Probe live"}
+                    </Button>
+                    {(probeMap.size > 0 || preview.details.some((d) => d.action === "add" && (d.planTier === "trial" || d.planTier === "failed"))) && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        icon="filter_alt_off"
+                        onClick={exclTrialAuto}
+                        disabled={probing}
+                        title="Uncheck rows tagged as Trial or Failed"
+                      >
+                        Skip non-Pro
+                      </Button>
+                    )}
+                  </div>
+                )}
+
+                <div className="mt-2 max-h-72 overflow-auto rounded-lg border border-border">
                   <table className="w-full text-sm">
                     <thead className="sticky top-0 bg-bg z-10">
                       <tr className="border-b border-border text-left">
@@ -396,12 +617,14 @@ export default function MergeConnectionsModal({ isOpen, onClose }) {
                         <th className="px-3 py-2 text-xs font-medium text-text-muted">Status</th>
                         <th className="px-3 py-2 text-xs font-medium text-text-muted">Provider</th>
                         <th className="px-3 py-2 text-xs font-medium text-text-muted">Account</th>
+                        <th className="px-3 py-2 text-xs font-medium text-text-muted">Plan</th>
                       </tr>
                     </thead>
                     <tbody>
                       {preview.details.map((d, i) => {
                         const isAdd = d.action === "add" && d.fingerprint;
                         const isExcluded = isAdd && excluded.has(d.fingerprint);
+                        const plan = isAdd ? effectivePlan(d) : null;
                         return (
                           <tr
                             key={i}
@@ -428,10 +651,17 @@ export default function MergeConnectionsModal({ isOpen, onClose }) {
                             <td className="px-3 py-1.5"><StatusPill action={d.action} /></td>
                             <td className="px-3 py-1.5 text-xs font-mono">{d.provider}</td>
                             <td className={cn(
-                              "px-3 py-1.5 text-xs truncate max-w-[200px]",
+                              "px-3 py-1.5 text-xs truncate max-w-[180px]",
                               isAdd && isExcluded && "line-through",
                             )}>
                               {d.email || d.name || "—"}
+                            </td>
+                            <td className="px-3 py-1.5">
+                              {plan ? (
+                                <PlanPill tier={plan.tier} source={plan.source} note={plan.note} />
+                              ) : (
+                                <span className="text-text-muted text-[10px]">—</span>
+                              )}
                             </td>
                           </tr>
                         );
@@ -441,7 +671,7 @@ export default function MergeConnectionsModal({ isOpen, onClose }) {
                 </div>
                 {addRows.length > 0 && (
                   <p className="mt-1.5 text-[11px] text-text-muted">
-                    Uncheck rows to skip them. Skipped (duplicate) rows aren&apos;t selectable.
+                    Uncheck rows to skip them. Plan tier with <span className="font-mono">●</span> is from a live probe; otherwise heuristic.
                   </p>
                 )}
               </details>
