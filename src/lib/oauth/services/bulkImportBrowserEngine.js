@@ -20,43 +20,59 @@ function loadRuntimeHelper(name) {
 }
 
 async function launchChromium({ proxyUrl } = {}) {
-  const runtime = loadRuntimeHelper("playwrightRuntime");
-  if (runtime?.ensurePlaywrightRuntime) {
-    const ready = runtime.ensurePlaywrightRuntime({ silent: false });
-    if (!ready.ok && ready.error) throw ready.error;
-  }
-
   let chromium;
   try {
     const playwright = await import("playwright");
     chromium = playwright.chromium;
-  } catch (err) {
-    const friendly = new Error(
-      `Playwright is not installed. Run "npm install -g playwright && npx playwright install chromium" or restart the bulk import to auto-install.`
-    );
-    friendly.code = "PLAYWRIGHT_PACKAGE_MISSING";
-    friendly.cause = err;
-    throw friendly;
+  } catch (firstErr) {
+    const runtime = loadRuntimeHelper("playwrightRuntime");
+    if (!runtime?.installPlaywrightOnly) {
+      const err = new Error(
+        `Playwright not installed and runtime helper unavailable. Run "npm install -g playwright && npx playwright install chromium" then retry. Cause: ${firstErr.message}`
+      );
+      err.code = "PLAYWRIGHT_PACKAGE_MISSING";
+      throw err;
+    }
+    const installed = runtime.installPlaywrightOnly({ silent: false });
+    if (!installed.ok) {
+      const err = new Error(
+        `Playwright auto-install failed: ${installed.reason}. Run "npm install -g playwright && npx playwright install chromium" manually then retry.`
+      );
+      err.code = "PLAYWRIGHT_INSTALL_FAILED";
+      throw err;
+    }
+    const playwright = await import("playwright");
+    chromium = playwright.chromium;
   }
-
   const options = { headless: true };
   if (proxyUrl) options.proxy = { server: proxyUrl };
   return chromium.launch(options);
 }
 
 async function launchCamoufox({ proxyUrl } = {}) {
-  const runtime = loadRuntimeHelper("camoufoxRuntime");
-  if (!runtime?.ensureCamoufoxRuntime) {
-    const err = new Error(
-      `Camoufox runtime helper missing. Reinstall wyxrouter or pick the Chromium engine.`
-    );
-    err.code = "CAMOUFOX_RUNTIME_HELPER_MISSING";
-    throw err;
+  let camoufox;
+  try {
+    camoufox = await import("camoufox-js");
+  } catch (firstErr) {
+    const runtime = loadRuntimeHelper("camoufoxRuntime");
+    if (!runtime?.installCamoufoxOnly) {
+      const err = new Error(
+        `Camoufox not installed and runtime helper unavailable. Reinstall wyxrouter or pick the Chromium engine. Cause: ${firstErr.message}`
+      );
+      err.code = "CAMOUFOX_PACKAGE_MISSING";
+      throw err;
+    }
+    const installed = runtime.installCamoufoxOnly({ silent: false });
+    if (!installed.ok) {
+      const err = new Error(
+        `Camoufox auto-install failed: ${installed.reason}. Run "npm install -g camoufox-js && npx camoufox-js fetch" manually then retry. You can also switch back to the Chromium engine.`
+      );
+      err.code = "CAMOUFOX_INSTALL_FAILED";
+      throw err;
+    }
+    camoufox = await import("camoufox-js");
   }
-  const ready = runtime.ensureCamoufoxRuntime({ silent: false });
-  if (!ready.ok && ready.error) throw ready.error;
 
-  const camoufox = ready.module || runtime.loadCamoufoxModule?.();
   if (!camoufox?.launchOptions) {
     const err = new Error(
       `camoufox-js loaded but does not expose launchOptions(); reinstall the package or pick the Chromium engine.`

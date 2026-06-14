@@ -224,6 +224,50 @@ function ensurePlaywrightRuntime({ silent = false, timeout } = {}) {
   return { ok: false, error };
 }
 
+function installPlaywrightOnly({ silent = false, timeout = 600_000 } = {}) {
+  if (!silent) console.log("⏳ Installing playwright package...");
+  const installRes = runNpmInstall({
+    cwd: getRuntimeDir(),
+    pkgs: [`${PLAYWRIGHT_PACKAGE}@${PLAYWRIGHT_VERSION}`],
+    extraArgs: ["--no-save"],
+    timeout: 300_000,
+  });
+
+  if (!installRes.ok) {
+    const reason = summarizeInstallStderr(installRes.stderr);
+    return { ok: false, reason };
+  }
+
+  const cliPath = path.join(getRuntimeNodeModules(), PLAYWRIGHT_PACKAGE, "cli.js");
+  if (!fs.existsSync(cliPath)) {
+    return {
+      ok: false,
+      reason: `playwright installed but cli.js not found at ${cliPath} — npm may have installed to a different location`,
+    };
+  }
+
+  if (!silent) console.log("⏳ Downloading Playwright Chromium (~150MB)...");
+  const res = spawnSync(process.execPath, [cliPath, "install", "chromium"], {
+    stdio: silent ? ["ignore", "pipe", "pipe"] : "inherit",
+    timeout,
+    encoding: "utf8",
+  });
+
+  if (res.status === 0) {
+    if (!silent) console.log("✅ Playwright Chromium ready");
+    return { ok: true };
+  }
+
+  const stderr = String(res.stderr || "");
+  let reason = "unknown error";
+  if (/ENOTFOUND|ETIMEDOUT|getaddrinfo/i.test(stderr)) reason = "no internet connection";
+  else if (/EACCES|EPERM/i.test(stderr)) reason = "permission denied";
+  else if (/ENOSPC/i.test(stderr)) reason = "not enough disk space";
+  else if (stderr.trim()) reason = stderr.trim().split(/\r?\n/).pop().slice(0, 200);
+
+  return { ok: false, reason };
+}
+
 function loadPlaywrightModule() {
   return tryRequirePlaywright();
 }
@@ -234,6 +278,7 @@ function resetCache() {
 
 module.exports = {
   ensurePlaywrightRuntime,
+  installPlaywrightOnly,
   loadPlaywrightModule,
   isChromiumBinaryAvailable,
   resetCache,

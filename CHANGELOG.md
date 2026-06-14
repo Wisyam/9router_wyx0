@@ -1,3 +1,15 @@
+# v0.4.86-3 (2026-06-14)
+
+## Release Highlights
+- [FIX] Bulk-import (Kiro/CodeBuddy/Qoder) gak fail lagi dengan "Playwright not available" — chromium dan camoufox engine sekarang langsung jalan setelah auto-install
+- [FIX] Camoufox engine yang sebelumnya kena bug yang sama sekarang juga bisa launch normal di Linux dan Windows
+
+## Technical Notes
+- Root cause: webpack-bundled playwrightRuntime/camoufoxRuntime helpers had `require(<variable>)` calls. Webpack rewrote them to a stub module (id 51029) that always throws MODULE_NOT_FOUND, so all 3 resolution strategies in v0.4.86-2 failed even after npm install succeeded.
+- Fix: bulkImportBrowserEngine.launchChromium / launchCamoufox now try `await import("playwright")` (literal string, treated as serverExternalPackages by webpack → native Node resolution) FIRST. Only on failure do they invoke a NEW install-only helper that runs npm install + binary fetch via child processes (no require() inside helper). After install, the dynamic import succeeds via NODE_PATH from buildEnvWithRuntime.
+- New helpers: installPlaywrightOnly() in cli/hooks/playwrightRuntime.js, installCamoufoxOnly() in cli/hooks/camoufoxRuntime.js. Old ensurePlaywrightRuntime / ensureCamoufoxRuntime kept for backward compat.
+- Verified end-to-end on VPS sandbox 134.209.102.0 with /tmp/repro3.sh — prior to fix: 2/2 accounts failed at preflight in 2.88s. After fix: workers reach login step.
+
 # v0.4.86-2 (2026-06-14)
 
 ## Hotfix — Bulk-Import Playwright Resolution

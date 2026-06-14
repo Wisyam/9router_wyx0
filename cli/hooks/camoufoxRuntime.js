@@ -153,6 +153,67 @@ function ensureCamoufoxRuntime({ silent = false } = {}) {
   return { ok: true, module: pkg.module };
 }
 
+function summarizeInstallStderr(stderr = "") {
+  const text = String(stderr).trim();
+  if (!text) return "no output";
+  if (/ENOTFOUND|ETIMEDOUT|EAI_AGAIN|getaddrinfo|network/i.test(text)) {
+    return "network error (registry unreachable)";
+  }
+  if (/EACCES|EPERM|permission denied/i.test(text)) {
+    return "permission denied (check folder permissions)";
+  }
+  if (/ENOSPC|no space/i.test(text)) {
+    return "not enough disk space";
+  }
+  const npmErr = text.match(/npm ERR! (.+)/);
+  if (npmErr) return npmErr[1].slice(0, 200);
+  return text.split(/\r?\n/).filter(Boolean).pop().slice(0, 200);
+}
+
+function installCamoufoxOnly({ silent = false, timeout = 600_000 } = {}) {
+  if (!silent) console.log("⏳ Installing camoufox-js package...");
+  const installRes = runNpmInstall({
+    cwd: getRuntimeDir(),
+    pkgs: [`${CAMOUFOX_PACKAGE}@${CAMOUFOX_VERSION}`],
+    extraArgs: ["--no-save"],
+    timeout: 300_000,
+  });
+
+  if (!installRes.ok) {
+    const reason = summarizeInstallStderr(installRes.stderr);
+    return { ok: false, reason };
+  }
+
+  const cliPath = path.join(getRuntimeNodeModules(), CAMOUFOX_PACKAGE, "dist", "cli.js");
+  if (!fs.existsSync(cliPath)) {
+    return {
+      ok: false,
+      reason: `camoufox-js installed but cli.js not found at ${cliPath} — npm may have installed to a different location`,
+    };
+  }
+
+  if (!silent) console.log("⏳ Downloading Camoufox browser binary (~150MB)...");
+  const res = spawnSync(process.execPath, [cliPath, "fetch"], {
+    stdio: silent ? ["ignore", "pipe", "pipe"] : "inherit",
+    timeout,
+    encoding: "utf8",
+  });
+
+  if (res.status === 0) {
+    if (!silent) console.log("✅ Camoufox browser ready");
+    return { ok: true };
+  }
+
+  const stderr = String(res.stderr || "");
+  let reason = "unknown error";
+  if (/ENOTFOUND|ETIMEDOUT|getaddrinfo/i.test(stderr)) reason = "no internet connection";
+  else if (/EACCES|EPERM/i.test(stderr)) reason = "permission denied";
+  else if (/ENOSPC/i.test(stderr)) reason = "not enough disk space";
+  else if (stderr.trim()) reason = stderr.trim().split(/\r?\n/).pop().slice(0, 200);
+
+  return { ok: false, reason };
+}
+
 function loadCamoufoxModule() {
   return tryRequireCamoufox();
 }
@@ -163,6 +224,7 @@ function resetCache() {
 
 module.exports = {
   ensureCamoufoxRuntime,
+  installCamoufoxOnly,
   loadCamoufoxModule,
   isCamoufoxBinaryAvailable,
   resetCache,
