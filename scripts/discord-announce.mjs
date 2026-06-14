@@ -7,9 +7,7 @@ const MENTION = "@everyone";
 const UPDATE_COMMAND = "npm update -g wyxrouter";
 const CHANGELOG_PATH = path.resolve("CHANGELOG.md");
 const OUTPUT_PATH = path.resolve("discord-payload.json");
-
-const FEATURE_KEYWORDS = ["feat", "feature", "new", "added", "add"];
-const FIX_KEYWORDS = ["fix", "hotfix", "bug", "patch"];
+const MAX_BULLET_LEN = 180;
 
 function readSection(version) {
   const md = fs.readFileSync(CHANGELOG_PATH, "utf8");
@@ -30,7 +28,7 @@ function escapeRegex(str) {
 function classifyHeading(headingText) {
   const lower = headingText.toLowerCase();
   if (/hotfix|bug ?fix|patch only/.test(lower)) return "FIX";
-  if (/feature|new|added|added|introduce|support|selector|selection|engine|format|integration/.test(lower)) return "NEW";
+  if (/feature|new\b|added|introduce|support|selector|selection|engine|format|integration|release/.test(lower)) return "NEW";
   if (/improvement|enhancement|polish|refactor|chore|cleanup/.test(lower)) return "IMPROVEMENT";
   if (/fix/.test(lower)) return "FIX";
   return null;
@@ -44,6 +42,26 @@ function classifyByContent(bullets) {
   if (hasFix && !hasFeature) return "FIX";
   if (hasFeature && hasFix) return "NEW";
   return "IMPROVEMENT";
+}
+
+function rewriteBullet(text) {
+  let out = text;
+  out = out.replace(/`([^`]+)`/g, "$1");
+  out = out.replace(/\*\*([^*]+)\*\*/g, "$1");
+  out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1");
+  out = out.replace(/\(#\d+[^)]*\)/g, "");
+  out = out.replace(/[\u2014\u2013]/g, "-");
+  out = out.replace(/[\u2026]/g, "...");
+  out = out.replace(/[\u201c\u201d]/g, '"');
+  out = out.replace(/[\u2018\u2019]/g, "'");
+  out = out.replace(/[\.;]\s*$/, "");
+  out = out.replace(/\s+/g, " ").trim();
+  if (out.length > MAX_BULLET_LEN) {
+    const cutoff = out.lastIndexOf(" ", MAX_BULLET_LEN - 1);
+    const sliceEnd = cutoff > 60 ? cutoff : MAX_BULLET_LEN - 1;
+    out = out.slice(0, sliceEnd).replace(/[,;:\s]+$/, "") + "...";
+  }
+  return out;
 }
 
 function parseSection(body) {
@@ -73,17 +91,6 @@ function parseSection(body) {
   return sections;
 }
 
-function rewriteBullet(text) {
-  let out = text;
-  out = out.replace(/`([^`]+)`/g, "$1");
-  out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1 ($2)");
-  out = out.replace(/\(#\d+[^)]*\)/g, "");
-  out = out.replace(/[\.;]\s*$/, "");
-  out = out.replace(/\s+/g, " ").trim();
-  if (out.length > 220) out = out.slice(0, 217) + "…";
-  return out;
-}
-
 function bucketize(sections) {
   const buckets = { NEW: [], FIX: [], IMPROVEMENT: [] };
   for (const sec of sections) {
@@ -109,8 +116,8 @@ function determineUpdateType(version, buckets) {
   return "PATCH UPDATE";
 }
 
-function buildContent(version, buckets) {
-  const type = determineUpdateType(version, buckets);
+function buildContent({ version, buckets, label }) {
+  const type = label || determineUpdateType(version, buckets);
   const lines = [MENTION, `## ${type} v${version}`];
   if (buckets.NEW.length) {
     lines.push("[NEW]");
@@ -127,43 +134,82 @@ function buildContent(version, buckets) {
     for (const b of buckets.IMPROVEMENT) lines.push(`- ${b}`);
     lines.push("");
   }
-  lines.push(`run \`\`\`${UPDATE_COMMAND}\`\`\``);
-  return lines.join("\n");
+  lines.push("run");
+  lines.push("```");
+  lines.push(UPDATE_COMMAND);
+  lines.push("```");
+  return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function mergeBuckets(buckets) {
+  const merged = { NEW: [], FIX: [], IMPROVEMENT: [] };
+  for (const b of buckets) {
+    merged.NEW.push(...b.NEW);
+    merged.FIX.push(...b.FIX);
+    merged.IMPROVEMENT.push(...b.IMPROVEMENT);
+  }
+  return merged;
+}
+
+function bucketizePerBullet(section) {
+  const buckets = { NEW: [], FIX: [], IMPROVEMENT: [] };
+  for (const raw of section.bullets) {
+    const tagMatch = raw.match(/^\[(NEW|FIX|IMPROVEMENT)\]\s*:?\s*/i);
+    let typed;
+    let cleaned = raw;
+    if (tagMatch) {
+      typed = tagMatch[1].toUpperCase();
+      cleaned = raw.slice(tagMatch[0].length);
+    } else {
+      typed = classifyByContent([raw]);
+    }
+    buckets[typed].push(rewriteBullet(cleaned));
+  }
+  return buckets;
+}
+
+function loadVersion(version) {
+  const body = readSection(version);
+  if (!body) return null;
+  const sections = parseSection(body);
+  const highlightSection = sections.find((s) => /release\s*highlight|announce(?:ment)?/i.test(s.heading));
+  if (highlightSection) {
+    const buckets = bucketizePerBullet(highlightSection);
+    if (buckets.NEW.length || buckets.FIX.length || buckets.IMPROVEMENT.length) {
+      return { version, buckets, fromHighlights: true };
+    }
+  }
+  const buckets = bucketize(sections);
+  if (!buckets.NEW.length && !buckets.FIX.length && !buckets.IMPROVEMENT.length) return null;
+  return { version, buckets, fromHighlights: false };
+}
+
+function fallbackPayload(version) {
+  return {
+    content: `${MENTION}\n## RELEASE v${version}\nSee CHANGELOG.md for details.\n\nrun\n\`\`\`\n${UPDATE_COMMAND}\n\`\`\``,
+    allowed_mentions: { parse: ["everyone"] },
+  };
 }
 
 function main() {
-  const version = (process.argv[2] || "").trim();
-  if (!version) {
-    console.error("Usage: discord-announce.mjs <version>");
+  const versions = process.argv.slice(2).filter(Boolean);
+  if (versions.length === 0) {
+    console.error("Usage: discord-announce.mjs <version> [extra-version ...]");
     process.exit(2);
   }
 
-  const body = readSection(version);
-  if (!body) {
-    console.error(`No CHANGELOG section found for v${version}; writing minimal payload.`);
-    const fallback = {
-      content: `${MENTION}\n## RELEASE v${version}\nSee CHANGELOG.md for details.\n\nrun \`\`\`${UPDATE_COMMAND}\`\`\``,
-      allowed_mentions: { parse: ["everyone"] },
-    };
-    fs.writeFileSync(OUTPUT_PATH, JSON.stringify(fallback, null, 2));
-    console.log(fallback.content);
+  const primaryVersion = versions[0];
+  const loaded = versions.map(loadVersion).filter(Boolean);
+
+  if (loaded.length === 0) {
+    const payload = fallbackPayload(primaryVersion);
+    fs.writeFileSync(OUTPUT_PATH, JSON.stringify(payload, null, 2));
+    console.log(payload.content);
     return;
   }
 
-  const sections = parseSection(body);
-  const buckets = bucketize(sections);
-
-  if (!buckets.NEW.length && !buckets.FIX.length && !buckets.IMPROVEMENT.length) {
-    const fallback = {
-      content: `${MENTION}\n## RELEASE v${version}\nSee CHANGELOG.md for details.\n\nrun \`\`\`${UPDATE_COMMAND}\`\`\``,
-      allowed_mentions: { parse: ["everyone"] },
-    };
-    fs.writeFileSync(OUTPUT_PATH, JSON.stringify(fallback, null, 2));
-    console.log(fallback.content);
-    return;
-  }
-
-  const content = buildContent(version, buckets);
+  const merged = mergeBuckets(loaded.map((entry) => entry.buckets));
+  const content = buildContent({ version: primaryVersion, buckets: merged });
   const payload = {
     content,
     allowed_mentions: { parse: ["everyone"] },

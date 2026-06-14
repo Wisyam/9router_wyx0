@@ -1,5 +1,14 @@
 # v0.4.85 (2026-06-14)
 
+## Release Highlights
+- [NEW] CodeBuddy bulk-import sekarang support 3 format token: access only, access + refresh, dan access + refresh + API key (365 hari)
+- [NEW] Pilih browser engine di bulk-import: Chromium (default) atau Camoufox (stealth Firefox)
+- [NEW] Donate modal baru via Paymenku — 5 nominal preset (Rp 10k–250k), bayar QRIS/VA/E-Wallet
+- [NEW] Auto-announce changelog ke Discord setiap version bump
+- [FIX] Build error "Module not found: better-sqlite3" di Linux/CI sudah clear — install di GitHub Actions tidak fail lagi
+- [FIX] Auto-install Playwright Chromium saat first bulk-import — no more "Executable doesn't exist" untuk user yang baru `npm install -g wyxrouter`
+- [FIX] Bulk login akun Google Workspace (custom domain) tidak stuck lagi di consent "Welcome to your new account"
+
 ## Bulk Token Import — Flexible Formats (PR #6 by Tentoxa)
 - `/api/oauth/codebuddy/bulk-token` now accepts three line formats: `accessToken` (24h OAuth-only, backward compatible), `accessToken:refreshToken` (auto-refresh enabled), and `accessToken:refreshToken:apiKey` (365-day API-key path).
 - Smart JWT validation by structural check (presence of dots) — no false positives on valid JWTs, rejects malformed lines early.
