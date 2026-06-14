@@ -64,21 +64,5 @@ export function detectLocalInstances() {
     addCandidate(process.env.DATA_DIR, "DATA_DIR env variable");
   }
 
-  const laragonNodeModules = "D:\\laragon\\bin\\nodejs";
-  if (fs.existsSync(laragonNodeModules)) {
-    try {
-      const entries = fs.readdirSync(laragonNodeModules, { withFileTypes: true });
-      for (const entry of entries) {
-        if (entry.isDirectory() && entry.name.startsWith("node-v")) {
-          const appDataPath = path.join(
-            process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"),
-            APP_NAME,
-          );
-          addCandidate(appDataPath, "Laragon Node.js — default appdata");
-        }
-      }
-    } catch {}
-  }
-
   return candidates;
 }
