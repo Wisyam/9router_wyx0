@@ -24,10 +24,10 @@
     "CHANGELOG.md"
   ],
   "scripts": {
-    "dev": "next dev --webpack --port 20129",
+    "dev": "next dev --webpack --port 20128",
     "build": "next build --webpack",
     "start": "node ./scripts/start-standalone.mjs",
-    "dev:bun": "bun --bun next dev --webpack --port 20129",
+    "dev:bun": "bun --bun next dev --webpack --port 20128",
     "build:bun": "bun --bun next build --webpack",
     "start:bun": "bun ./.next/standalone/server.js",
     "prepack": "echo 'Ensure cli/app is built before publishing: node cli/scripts/build-cli.js'",
