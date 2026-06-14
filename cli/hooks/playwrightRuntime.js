@@ -15,10 +15,45 @@ const PLAYWRIGHT_VERSION = "^1.54.2";
 
 let cachedReady = null;
 
+// Walk up from `__dirname` (cli/hooks) to find the wyxrouter package root,
+// then probe both `node_modules/playwright` (when running from source) and
+// `app/node_modules/playwright` (the location used by the published npm
+// package, where the bundled Next.js app keeps its deps).
+function findBundledPlaywrightDirs() {
+  const dirs = [];
+  const visited = new Set();
+
+  function probe(baseDir) {
+    if (!baseDir) return;
+    const resolved = path.resolve(baseDir);
+    if (visited.has(resolved)) return;
+    visited.add(resolved);
+    const direct = path.join(resolved, "node_modules", PLAYWRIGHT_PACKAGE, "package.json");
+    if (fs.existsSync(direct)) dirs.push(path.dirname(direct));
+    const inApp = path.join(resolved, "app", "node_modules", PLAYWRIGHT_PACKAGE, "package.json");
+    if (fs.existsSync(inApp)) dirs.push(path.dirname(inApp));
+  }
+
+  // hooks/ -> wyxrouter/ (npm published) -> walk a few levels up for safety
+  let dir = path.resolve(__dirname, "..");
+  for (let i = 0; i < 6 && dir; i += 1) {
+    probe(dir);
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return dirs;
+}
+
 function tryRequirePlaywright() {
+  // 1) Standard Node resolution (works when running from source where
+  //    playwright is in the root node_modules, or when something else
+  //    has already pinned NODE_PATH).
   try {
     return require(PLAYWRIGHT_PACKAGE);
   } catch {}
+
+  // 2) User-writable runtime dir (lazy-installed by ensurePlaywrightPackage).
   try {
     const runtimeNm = getRuntimeNodeModules();
     const candidate = path.join(runtimeNm, PLAYWRIGHT_PACKAGE);
@@ -26,6 +61,18 @@ function tryRequirePlaywright() {
       return require(candidate);
     }
   } catch {}
+
+  // 3) Bundled location inside the published wyxrouter package
+  //    (`<pkg-root>/app/node_modules/playwright`). Without this probe the
+  //    auto-install path would always need to re-download playwright into
+  //    %APPDATA%/9router/runtime even though a working copy already ships
+  //    with the global install.
+  for (const candidate of findBundledPlaywrightDirs()) {
+    try {
+      return require(candidate);
+    } catch {}
+  }
+
   return null;
 }
 
@@ -62,6 +109,23 @@ function findCli() {
   return null;
 }
 
+function summarizeInstallStderr(stderr = "") {
+  const text = String(stderr).trim();
+  if (!text) return "no output";
+  if (/ENOTFOUND|ETIMEDOUT|EAI_AGAIN|getaddrinfo|network/i.test(text)) {
+    return "network error (registry unreachable)";
+  }
+  if (/EACCES|EPERM|permission denied/i.test(text)) {
+    return "permission denied (check folder permissions)";
+  }
+  if (/ENOSPC|no space/i.test(text)) {
+    return "not enough disk space";
+  }
+  const npmErr = text.match(/npm ERR! (.+)/);
+  if (npmErr) return npmErr[1].slice(0, 200);
+  return text.split(/\r?\n/).filter(Boolean).pop().slice(0, 200);
+}
+
 function ensurePlaywrightPackage({ silent = false } = {}) {
   const mod = tryRequirePlaywright();
   if (mod) return { ok: true, module: mod };
@@ -75,15 +139,24 @@ function ensurePlaywrightPackage({ silent = false } = {}) {
   });
 
   if (!installRes.ok) {
+    const summary = summarizeInstallStderr(installRes.stderr);
     return {
       ok: false,
-      reason: `npm install ${PLAYWRIGHT_PACKAGE} failed: ${installRes.stderr.split("\n").pop().slice(0, 200)}`,
+      reason: `npm install playwright failed (exit ${installRes.code ?? "?"}): ${summary}`,
     };
   }
 
   const installed = tryRequirePlaywright();
   if (!installed) {
-    return { ok: false, reason: "playwright installed but cannot be required" };
+    const runtimeNm = getRuntimeNodeModules();
+    const targetPkg = path.join(runtimeNm, PLAYWRIGHT_PACKAGE, "package.json");
+    const exists = fs.existsSync(targetPkg);
+    return {
+      ok: false,
+      reason: exists
+        ? `playwright was installed to ${runtimeNm} but require() still fails — likely a Node module resolution issue. Add NODE_PATH=${runtimeNm} to your shell or reinstall wyxrouter`
+        : `npm install reported success but ${targetPkg} is missing — npm may have installed to a different cwd`,
+    };
   }
   return { ok: true, module: installed };
 }
