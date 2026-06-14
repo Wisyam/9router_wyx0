@@ -1,3 +1,8 @@
+# v0.4.84-1 (2026-06-14)
+
+## Hotfix — Donate Tier Mapping
+- Corrected the Paymenku tier list: every amount was paired with the link code one slot below it (Rp 10k pointed at the Rp 250k link, Rp 250k at Rp 100k, etc.). Verified codes against the merchant dashboard and re-aligned each tier with its real Payment Link.
+
 # v0.4.84 (2026-06-14)
 
 ## Donate via Paymenku
