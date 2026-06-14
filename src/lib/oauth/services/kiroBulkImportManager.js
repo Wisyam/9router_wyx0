@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { DATA_DIR } from "../../dataDir.js";
+import { getOptimalWorkerCount, isAutoConcurrencyValue } from "../../systemSpecs.js";
 import { KiroService } from "./kiro.js";
 import { createKiroCallbackMonitor, runKiroGoogleAutomation } from "./kiroGoogleAutomation.js";
 
@@ -67,6 +68,13 @@ function writePersistedLatestJobId(jobId, metaFile = KIRO_BULK_IMPORT_META_FILE)
 }
 
 function clampConcurrency(value) {
+  // "auto" (or boolean true) defers to system spec detection so users on
+  // beefier machines automatically get more workers without editing the form.
+  if (isAutoConcurrencyValue(value)) {
+    const detected = getOptimalWorkerCount();
+    const safeDetected = Number.isFinite(detected) ? detected : KIRO_BULK_IMPORT_DEFAULT_CONCURRENCY;
+    return Math.min(KIRO_BULK_IMPORT_MAX_CONCURRENCY, Math.max(KIRO_BULK_IMPORT_MIN_CONCURRENCY, safeDetected));
+  }
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed)) return KIRO_BULK_IMPORT_DEFAULT_CONCURRENCY;
   return Math.min(KIRO_BULK_IMPORT_MAX_CONCURRENCY, Math.max(KIRO_BULK_IMPORT_MIN_CONCURRENCY, parsed));

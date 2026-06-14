@@ -17,6 +17,12 @@ const ENGINE_OPTIONS = [
   { value: "camoufox", label: "Camoufox (stealth Firefox, slower)" },
 ];
 
+function describeWorkerLimit(limitedBy) {
+  if (limitedBy === "ram") return "RAM";
+  if (limitedBy === "cpu") return "CPU";
+  return "default";
+}
+
 function formatStepLabel(value) {
   return String(value || "waiting").replaceAll("_", " ");
 }
@@ -72,6 +78,9 @@ export default function BulkAccountAutomationModal({
   const completedRefreshJobsRef = useRef(new Set());
   const [bulkText, setBulkText] = useState("");
   const [concurrency, setConcurrency] = useState(String(DEFAULT_CONCURRENCY));
+  const [autoConcurrency, setAutoConcurrency] = useState(true);
+  const [systemSpecInfo, setSystemSpecInfo] = useState(null);
+  const [systemSpecLoading, setSystemSpecLoading] = useState(false);
   const [engine, setEngine] = useState(DEFAULT_ENGINE);
   const [activeJob, setActiveJob] = useState(null);
   const [error, setError] = useState(null);
@@ -98,6 +107,7 @@ export default function BulkAccountAutomationModal({
   const resetState = useCallback(() => {
     setBulkText("");
     setConcurrency(String(DEFAULT_CONCURRENCY));
+    setAutoConcurrency(true);
     setActiveJob(null);
     setError(null);
     setImporting(false);
@@ -106,6 +116,35 @@ export default function BulkAccountAutomationModal({
       window.localStorage.removeItem(storageKey);
     }
   }, [storageKey]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    if (systemSpecInfo) return;
+
+    let cancelled = false;
+    const run = async () => {
+      setSystemSpecLoading(true);
+      try {
+        const res = await fetch("/api/system/specs", { cache: "no-store" });
+        const data = await res.json();
+        if (cancelled || !data?.success) return;
+        setSystemSpecInfo(data);
+        setConcurrency((current) => {
+          const parsed = Number.parseInt(current, 10);
+          return Number.isFinite(parsed) ? current : String(data.recommended);
+        });
+      } catch {
+        // noop
+      } finally {
+        if (!cancelled) setSystemSpecLoading(false);
+      }
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, systemSpecInfo]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -191,7 +230,9 @@ export default function BulkAccountAutomationModal({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           accounts: lines,
-          concurrency: Number.parseInt(concurrency, 10) || DEFAULT_CONCURRENCY,
+          concurrency: autoConcurrency
+            ? "auto"
+            : Number.parseInt(concurrency, 10) || DEFAULT_CONCURRENCY,
           engine,
         }),
       });
@@ -284,17 +325,44 @@ export default function BulkAccountAutomationModal({
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
-                <label className="mb-2 block text-sm font-medium">Concurrent Workers</label>
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <label className="block text-sm font-medium">Concurrent Workers</label>
+                  <label className="flex cursor-pointer items-center gap-2 text-xs text-text-muted">
+                    <input
+                      type="checkbox"
+                      checked={autoConcurrency}
+                      onChange={(event) => {
+                        const next = event.target.checked;
+                        setAutoConcurrency(next);
+                        if (next && systemSpecInfo?.recommended) {
+                          setConcurrency(String(systemSpecInfo.recommended));
+                        }
+                      }}
+                    />
+                    Auto-detect by system spec
+                  </label>
+                </div>
                 <Input
                   type="number"
                   min="1"
                   max="8"
-                  value={concurrency}
+                  value={
+                    autoConcurrency
+                      ? String(systemSpecInfo?.recommended ?? concurrency)
+                      : concurrency
+                  }
                   onChange={(event) => setConcurrency(event.target.value)}
+                  disabled={autoConcurrency}
                   placeholder="4"
                 />
                 <p className="mt-1 text-xs text-text-muted">
-                  Default 4. Allowed range: 1 to 8 workers.
+                  {autoConcurrency
+                    ? systemSpecLoading
+                      ? "Detecting system specs..."
+                      : systemSpecInfo
+                        ? `Recommended ${systemSpecInfo.recommended} workers for this machine (${systemSpecInfo.specs.cpuCount}-core CPU, ${systemSpecInfo.specs.totalMemGb} GB RAM, limited by ${describeWorkerLimit(systemSpecInfo.limitedBy)}).`
+                        : `Falling back to default ${DEFAULT_CONCURRENCY} workers.`
+                    : "Manual mode. Allowed range: 1 to 8 workers."}
                 </p>
               </div>
 
