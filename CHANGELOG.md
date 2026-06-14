@@ -1,3 +1,16 @@
+# v0.4.86 (2026-06-14)
+
+## Release Highlights
+- [NEW] Bulk-import worker count sekarang auto-detect by spec (CPU + RAM). Toggle "Auto-detect by system spec" default ON di semua provider modal (Kiro, CodeBuddy, Qoder)
+- [NEW] Endpoint baru `GET /api/system/specs` yang expose recommended worker count plus alasan limit (CPU/RAM)
+- [NEW] Backend `clampConcurrency` menerima nilai `"auto"` selain angka — frontend cuma kirim `"auto"` dan backend resolve sendiri pakai `os.cpus()` + `os.totalmem()`
+
+## Worker Auto-Detection by System Spec
+- Hybrid formula: `min(floor(cpuCount / 2), floor(totalRamGb / 4))`, clamp 1–8. CPU side menjaga responsivitas, RAM side mencegah Playwright bikin swap. Whichever resource paling sempit menang.
+- Modal automation menampilkan ringkasan deteksi: `"Recommended N workers for this machine (X-core CPU, Y GB RAM, limited by CPU/RAM)"`. Uncheck toggle untuk kembali ke manual input 1–8.
+- Manager `kiroBulkImportManager` jadi single source of truth — `codebuddyBulkImportManager` & `qoderBulkImportManager` re-export dari sini, jadi semua provider otomatis dapat fitur tanpa kode duplikat.
+- Util baru `src/lib/systemSpecs.js` punya fallback aman: kalau `os.cpus()` / `os.totalmem()` blocked, kembali ke default 4 workers (perilaku lama). Boolean `true` & string `"AUTO"` (case-insensitive) juga di-treat sebagai auto.
+
 # v0.4.85 (2026-06-14)
 
 ## Release Highlights
