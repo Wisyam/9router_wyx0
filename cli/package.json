@@ -1,6 +1,6 @@
 {
   "name": "wyxrouter",
-  "version": "0.4.86-1",
+  "version": "0.4.86-2",
   "description": "9Router CLI - Start and manage 9Router server",
   "bin": {
     "wyxrouter": "./cli.js"

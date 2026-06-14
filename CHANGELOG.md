@@ -1,3 +1,11 @@
+# v0.4.86-2 (2026-06-14)
+
+## Hotfix — Bulk-Import Playwright Resolution
+- Bulk-import otomatis (CodeBuddy / Kiro / Qoder) failed dengan pesan **"Playwright not available. playwright installed but cannot be required"** padahal Playwright dan Chromium binary sebenarnya udah ke-bundle dengan `wyxrouter` global install.
+- Root cause: `cli/hooks/playwrightRuntime.js` cuma probe dua lokasi (`require('playwright')` walking up dari `wyxrouter/hooks/`, plus `%APPDATA%/9router/runtime/node_modules/playwright`). Lokasi bundled di npm-published package (`<wyxrouter-pkg-root>/app/node_modules/playwright`) gak pernah dicek, jadi setiap kali user trigger bulk-import pertama kali, code coba `npm install playwright` ke runtime dir — yang sering silent-fail di webpack/Next.js standalone context.
+- Fix: tambahkan helper `findBundledPlaywrightDirs()` yang walk up dari `cli/hooks/` dan probe baik `node_modules/playwright` maupun `app/node_modules/playwright` di tiap level (max 6 level). Bundled Playwright sekarang langsung dipakai tanpa harus install ulang.
+- Bonus: error message kalau install bener-bener gagal sekarang lebih informatif — include exit code, stderr summary (network / permission / disk space / npm error), dan diagnostic kalau npm sukses tapi resolution masih fail (suggest set `NODE_PATH` atau reinstall wyxrouter).
+
 # v0.4.86-1 (2026-06-14)
 
 ## Hotfix — Discord Announce Reliability
