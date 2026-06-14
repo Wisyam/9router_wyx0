@@ -1,3 +1,11 @@
+# v0.4.82 (2026-06-14)
+
+## Hotfix — Bulk Login Stuck on Google Workspace Welcome
+- Fixed bulk-import workers getting stuck in an infinite "polling token / waiting for next screen" loop when a Google Workspace account (`@custom-domain.com`) hits the "Welcome to your new account" consent screen.
+- The screen has only one valid action (the primary "I understand" button) and no skip option. The previous handler tried `Skip / Not now / No thanks` selectors first, found none, and never fell through to the primary action because subsequent loop iterations re-raced with the polling promise.
+- Added a Workspace-specific marker check that prioritises the primary action selector for that screen, so the worker clicks "I understand" on the first iteration that detects the page.
+- Affects Kiro, Qoder, and CodeBuddy bulk-import flows (they all share the Google automation path).
+
 # Unreleased
 
 ## Qoder Plan Awareness

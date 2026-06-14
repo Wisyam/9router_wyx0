@@ -235,6 +235,15 @@ const GOOGLE_ONBOARDING_MARKERS = [
   "pilih setelan anda",
 ];
 
+const GOOGLE_WORKSPACE_WELCOME_MARKERS = [
+  "welcome to your new account",
+  "selamat datang di akun baru",
+  "your administrator decides which",
+  "administrator anda memutuskan layanan",
+  "your organisation administrator manages",
+  "your organization administrator manages",
+];
+
 const KIRO_CALLBACK_PREFIX = "kiro://kiro.kiroAgent/authenticate-success";
 
 function parseCallbackUrl(rawUrl) {
@@ -424,6 +433,20 @@ async function handleGoogleOnboarding(page, pageText) {
     window.scrollTo(0, document.body?.scrollHeight || document.documentElement?.scrollHeight || 0);
   }).catch(() => null);
   await page.waitForTimeout(500);
+
+  // Workspace welcome ("Welcome to your new account" for @domain.com) has
+  // only one valid action: the primary "I understand" button. There is no
+  // skip option — clicking nothing leaves the worker stuck polling forever
+  // while the headless tab sits on the consent screen. Prioritise the
+  // primary action selector before the generic skip pass so we don't fall
+  // through to a non-existent "Not now" link.
+  if (includesAny(text, GOOGLE_WORKSPACE_WELCOME_MARKERS)) {
+    const acknowledged = await clickFirstActionable(page, APPROVE_BUTTON_SELECTORS);
+    if (acknowledged) {
+      await page.waitForTimeout(700);
+      return true;
+    }
+  }
 
   const clickedSkip = await clickFirstActionable(page, SKIP_BUTTON_SELECTORS);
   if (clickedSkip) {
