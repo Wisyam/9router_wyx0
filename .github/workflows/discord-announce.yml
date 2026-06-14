@@ -5,6 +5,12 @@ on:
     branches: [master]
     paths:
       - "package.json"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to announce (e.g. 0.4.86). Leave empty to use the version currently in package.json on master."
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -22,6 +28,19 @@ jobs:
         run: |
           NEW_VERSION=$(node -p "require('./package.json').version")
           PREV_VERSION=$(git show HEAD~1:package.json 2>/dev/null | node -p "JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).version" 2>/dev/null || echo "")
+          DISPATCH_VERSION="${{ github.event.inputs.version }}"
+
+          # On manual dispatch, override NEW_VERSION with the user-supplied value (or current package.json if empty).
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            if [ -n "$DISPATCH_VERSION" ]; then
+              NEW_VERSION="$DISPATCH_VERSION"
+            fi
+            echo "Manual dispatch: announcing $NEW_VERSION"
+            echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+            echo "bumped=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
           echo "prev_version=$PREV_VERSION" >> "$GITHUB_OUTPUT"
           if [ "$NEW_VERSION" != "$PREV_VERSION" ] && [ -n "$NEW_VERSION" ]; then
@@ -43,9 +62,10 @@ jobs:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: |
           if [ -z "$DISCORD_WEBHOOK_URL" ]; then
-            echo "DISCORD_WEBHOOK_URL secret is empty; skipping send."
-            exit 0
+            echo "::error title=Missing webhook secret::DISCORD_WEBHOOK_URL repo secret is empty. Set it under Settings → Secrets and variables → Actions, then re-run this workflow. Refer to .github/workflows/README.md for the setup steps."
+            exit 1
           fi
           curl -fsSL -X POST -H "Content-Type: application/json" \
             --data-binary @discord-payload.json \
             "$DISCORD_WEBHOOK_URL"
+          echo "Announcement sent for v${{ steps.detect.outputs.new_version }}"

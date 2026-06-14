@@ -1,3 +1,20 @@
+# v0.4.86-1 (2026-06-14)
+
+## Hotfix — Discord Announce Reliability
+- Discord Changelog Announce workflow sebelumnya silent-skip kalau secret `DISCORD_WEBHOOK_URL` kosong (exit 0 dengan warning), sehingga release v0.4.85 dan v0.4.86 awalnya gak nge-publish ke Discord channel walau workflow report success.
+- Workflow sekarang **fail-loud**: kalau secret kosong, step exit 1 dengan error message jelas. Status workflow merah di Actions tab supaya gak luput lagi.
+- Tambah `workflow_dispatch` trigger dengan optional `version` input. Maintainer bisa re-trigger announce manual dari Actions tab tanpa harus push commit baru atau bump version.
+
+## CHANGELOG Fix
+- v0.4.86 release entry awalnya cuma highlight worker auto-detect (PR #8) padahal release juga include cross-instance connection merge (PR #7 by @Akfiss). Entry untuk v0.4.86 tetap dipertahankan as-is (history fidelity), tapi v0.4.86-1 ini juga me-list ulang highlight gabungannya supaya Discord announce v0.4.86-1 mencerminkan apa yang user dapat kalau mereka `npm update -g wyxrouter` ke versi terbaru.
+
+## Release Highlights (Combined v0.4.86 + v0.4.86-1)
+- [NEW] **Cross-instance connection merge**: transfer provider connections antar dua instance 9router lokal di mesin yang sama, dua arah (Push / Pull), dengan dry-run preview, target backup otomatis, dan dedup berbasis fingerprint (PR #7 by @Akfiss)
+- [NEW] **Per-account checkbox** di merge preview + plan tier column untuk Qoder (Pro/Trial/Failed) dengan opsi "Probe live" via NDJSON streaming
+- [NEW] **Bulk-import worker count auto-detect by spec** (CPU + RAM). Toggle "Auto-detect by system spec" default ON di semua provider modal (Kiro, CodeBuddy, Qoder)
+- [NEW] Endpoint `GET /api/system/specs` yang expose recommended worker count plus alasan limit (CPU/RAM)
+- [FIX] Discord announce workflow sekarang fail-loud + manual dispatch, sehingga secret yang lupa di-set gak silent-skip lagi
+
 # v0.4.86 (2026-06-14)
 
 ## Release Highlights
