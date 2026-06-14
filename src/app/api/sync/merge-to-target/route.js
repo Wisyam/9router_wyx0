@@ -13,6 +13,7 @@ export async function POST(request) {
       strategy,
       dryRun,
       providerFilter,
+      excludeFingerprints,
     } = body;
 
     const dir = direction === "pull" ? "pull" : "push";
@@ -31,6 +32,7 @@ export async function POST(request) {
       strategy: strategy === "add-as-new" ? "add-as-new" : "skip",
       dryRun: dryRun !== false,
       providerFilter: Array.isArray(providerFilter) ? providerFilter : null,
+      excludeFingerprints: Array.isArray(excludeFingerprints) ? excludeFingerprints : null,
     });
 
     if (!dryRun) {

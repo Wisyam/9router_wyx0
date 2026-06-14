@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Modal from "./Modal";
 import Button from "./Button";
 import Input from "./Input";
@@ -34,6 +34,8 @@ export default function MergeConnectionsModal({ isOpen, onClose }) {
   const [preview, setPreview] = useState(null);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
+  // Set of fingerprints that user has UN-checked (will be excluded from execute)
+  const [excluded, setExcluded] = useState(() => new Set());
 
   const reset = useCallback(() => {
     setStep(1);
@@ -45,7 +47,44 @@ export default function MergeConnectionsModal({ isOpen, onClose }) {
     setPreview(null);
     setResult(null);
     setError(null);
+    setExcluded(new Set());
   }, []);
+
+  // Whenever a new preview arrives, reset selection so that all "add" items are checked by default
+  useEffect(() => {
+    if (preview) setExcluded(new Set());
+  }, [preview]);
+
+  // Derived stats based on current exclusion
+  const addRows = useMemo(
+    () => (preview?.details || []).filter((d) => d.action === "add" && d.fingerprint),
+    [preview],
+  );
+  const selectedAddCount = useMemo(
+    () => addRows.filter((d) => !excluded.has(d.fingerprint)).length,
+    [addRows, excluded],
+  );
+  const allSelected = addRows.length > 0 && selectedAddCount === addRows.length;
+  const noneSelected = selectedAddCount === 0;
+
+  const toggleOne = useCallback((fp) => {
+    setExcluded((prev) => {
+      const next = new Set(prev);
+      if (next.has(fp)) next.delete(fp);
+      else next.add(fp);
+      return next;
+    });
+  }, []);
+
+  const toggleAll = useCallback(() => {
+    if (allSelected) {
+      // Currently all selected → exclude all
+      setExcluded(new Set(addRows.map((d) => d.fingerprint)));
+    } else {
+      // Some or none selected → select all
+      setExcluded(new Set());
+    }
+  }, [addRows, allSelected]);
 
   const handleClose = useCallback(() => {
     reset();
@@ -109,6 +148,7 @@ export default function MergeConnectionsModal({ isOpen, onClose }) {
           direction,
           externalDataDir: targetDir.trim(),
           dryRun: false,
+          excludeFingerprints: Array.from(excluded),
         }),
       });
       const data = await res.json();
@@ -120,7 +160,7 @@ export default function MergeConnectionsModal({ isOpen, onClose }) {
     } finally {
       setExecuting(false);
     }
-  }, [direction, targetDir]);
+  }, [direction, targetDir, excluded]);
 
   const isPull = direction === "pull";
   const otherLabel = isPull ? "Source" : "Target";
@@ -320,31 +360,90 @@ export default function MergeConnectionsModal({ isOpen, onClose }) {
                 <p className="text-sm text-text-muted">All accounts already exist in the target. Nothing to merge.</p>
               </div>
             ) : (
-              <details className="group">
-                <summary className="flex items-center gap-1 cursor-pointer text-xs text-text-muted hover:text-text-main transition-colors">
-                  <span className="material-symbols-outlined text-[16px] transition-transform group-open:rotate-90">chevron_right</span>
-                  Show {preview.details?.length || 0} account details
+              <details className="group" open={addRows.length > 0}>
+                <summary className="flex items-center justify-between gap-2 cursor-pointer text-xs text-text-muted hover:text-text-main transition-colors">
+                  <span className="flex items-center gap-1">
+                    <span className="material-symbols-outlined text-[16px] transition-transform group-open:rotate-90">chevron_right</span>
+                    Show {preview.details?.length || 0} account details
+                  </span>
+                  {addRows.length > 0 && (
+                    <span className={cn(
+                      "rounded-full px-2 py-0.5 text-[10px] font-medium",
+                      noneSelected
+                        ? "bg-red-500/10 text-red-600 dark:text-red-400"
+                        : "bg-primary/10 text-primary",
+                    )}>
+                      {selectedAddCount}/{addRows.length} selected
+                    </span>
+                  )}
                 </summary>
-                <div className="mt-2 max-h-48 overflow-auto rounded-lg border border-border">
+                <div className="mt-2 max-h-64 overflow-auto rounded-lg border border-border">
                   <table className="w-full text-sm">
-                    <thead className="sticky top-0 bg-bg">
+                    <thead className="sticky top-0 bg-bg z-10">
                       <tr className="border-b border-border text-left">
+                        <th className="px-2 py-2 text-xs font-medium text-text-muted w-9">
+                          {addRows.length > 0 ? (
+                            <input
+                              type="checkbox"
+                              checked={allSelected}
+                              ref={(el) => { if (el) el.indeterminate = !allSelected && !noneSelected; }}
+                              onChange={toggleAll}
+                              className="size-3.5 cursor-pointer accent-primary"
+                              title={allSelected ? "Deselect all" : "Select all"}
+                            />
+                          ) : null}
+                        </th>
                         <th className="px-3 py-2 text-xs font-medium text-text-muted">Status</th>
                         <th className="px-3 py-2 text-xs font-medium text-text-muted">Provider</th>
                         <th className="px-3 py-2 text-xs font-medium text-text-muted">Account</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {preview.details.map((d, i) => (
-                        <tr key={i} className="border-b border-border/50 last:border-0">
-                          <td className="px-3 py-1.5"><StatusPill action={d.action} /></td>
-                          <td className="px-3 py-1.5 text-xs font-mono">{d.provider}</td>
-                          <td className="px-3 py-1.5 text-xs truncate max-w-[180px]">{d.email || d.name || "—"}</td>
-                        </tr>
-                      ))}
+                      {preview.details.map((d, i) => {
+                        const isAdd = d.action === "add" && d.fingerprint;
+                        const isExcluded = isAdd && excluded.has(d.fingerprint);
+                        return (
+                          <tr
+                            key={i}
+                            className={cn(
+                              "border-b border-border/50 last:border-0 transition-colors",
+                              isAdd && "cursor-pointer hover:bg-bg",
+                              isAdd && isExcluded && "opacity-50",
+                            )}
+                            onClick={isAdd ? () => toggleOne(d.fingerprint) : undefined}
+                          >
+                            <td className="px-2 py-1.5 align-middle">
+                              {isAdd ? (
+                                <input
+                                  type="checkbox"
+                                  checked={!isExcluded}
+                                  onChange={(e) => { e.stopPropagation(); toggleOne(d.fingerprint); }}
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="size-3.5 cursor-pointer accent-primary"
+                                />
+                              ) : (
+                                <span className="text-text-muted text-[10px]">—</span>
+                              )}
+                            </td>
+                            <td className="px-3 py-1.5"><StatusPill action={d.action} /></td>
+                            <td className="px-3 py-1.5 text-xs font-mono">{d.provider}</td>
+                            <td className={cn(
+                              "px-3 py-1.5 text-xs truncate max-w-[200px]",
+                              isAdd && isExcluded && "line-through",
+                            )}>
+                              {d.email || d.name || "—"}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
+                {addRows.length > 0 && (
+                  <p className="mt-1.5 text-[11px] text-text-muted">
+                    Uncheck rows to skip them. Skipped (duplicate) rows aren&apos;t selectable.
+                  </p>
+                )}
               </details>
             )}
 
@@ -355,9 +454,9 @@ export default function MergeConnectionsModal({ isOpen, onClose }) {
                 icon={isPull ? "download" : "merge_type"}
                 onClick={handleExecute}
                 loading={executing}
-                disabled={!preview.summary.toAdd}
+                disabled={!preview.summary.toAdd || noneSelected}
               >
-                {isPull ? "Import" : "Merge"} {preview.summary.toAdd} Connection{preview.summary.toAdd !== 1 ? "s" : ""}
+                {isPull ? "Import" : "Merge"} {selectedAddCount} Connection{selectedAddCount !== 1 ? "s" : ""}
               </Button>
             </div>
           </>

@@ -201,6 +201,7 @@ function buildReport({ direction, externalDataDir, externalDbFile, strategy, dry
         action: "add",
         newId: c._newId !== c.id ? c._newId : null,
         reason: c._reason,
+        fingerprint: fingerprint(c),
       })),
       ...toSkip,
     ],
@@ -275,11 +276,12 @@ async function insertConnRowsLocal(toAdd) {
  * @param {string} [opts.strategy] - "skip" (default) or "add-as-new"
  * @param {boolean} [opts.dryRun=true]
  * @param {string[]} [opts.providerFilter]
+ * @param {string[]} [opts.excludeFingerprints] - Fingerprints (from preview details) to skip during execute
  */
 export async function executeMerge(opts) {
   const direction = opts.direction === "pull" ? "pull" : "push";
   const externalDataDir = opts.externalDataDir || opts.targetDataDir;
-  const { strategy, dryRun, providerFilter } = opts;
+  const { strategy, dryRun, providerFilter, excludeFingerprints } = opts;
 
   if (!externalDataDir) {
     throw new Error("externalDataDir (or targetDataDir) is required");
@@ -308,6 +310,33 @@ export async function executeMerge(opts) {
 
   const { toAdd, toSkip } = diffConnections(sourceConns, targetConns);
 
+  // Apply user exclusion (from preview-step checkboxes) — only on real execute.
+  // toSkip is unaffected; we move excluded items into toSkip with reason "user_excluded".
+  let effectiveToAdd = toAdd;
+  let effectiveToSkip = toSkip;
+  if (!dryRun && Array.isArray(excludeFingerprints) && excludeFingerprints.length > 0) {
+    const excludeSet = new Set(excludeFingerprints);
+    const kept = [];
+    const userExcluded = [];
+    for (const c of toAdd) {
+      if (excludeSet.has(fingerprint(c))) {
+        userExcluded.push({
+          id: c.id,
+          provider: c.provider,
+          email: c.email || null,
+          name: c.name || null,
+          authType: c.authType,
+          reason: "user_excluded",
+          fingerprint: fingerprint(c),
+        });
+      } else {
+        kept.push(c);
+      }
+    }
+    effectiveToAdd = kept;
+    effectiveToSkip = [...toSkip, ...userExcluded];
+  }
+
   const report = buildReport({
     direction,
     externalDataDir: validation.dataDir,
@@ -316,11 +345,11 @@ export async function executeMerge(opts) {
     dryRun,
     sourceConns,
     targetConns,
-    toAdd,
-    toSkip,
+    toAdd: effectiveToAdd,
+    toSkip: effectiveToSkip,
   });
 
-  if (dryRun || toAdd.length === 0) {
+  if (dryRun || effectiveToAdd.length === 0) {
     return report;
   }
 
@@ -332,7 +361,7 @@ export async function executeMerge(opts) {
       report.errors.push(`Local backup failed: ${err.message}`);
     }
     try {
-      await insertConnRowsLocal(toAdd);
+      await insertConnRowsLocal(effectiveToAdd);
     } catch (err) {
       report.errors.push(err.message);
     }
@@ -344,7 +373,7 @@ export async function executeMerge(opts) {
     }
     const db = await openExternalDb(externalDbPath);
     try {
-      insertConnRowsExternal(db, toAdd);
+      insertConnRowsExternal(db, effectiveToAdd);
     } catch (err) {
       report.errors.push(err.message);
     } finally {
