@@ -6,17 +6,28 @@ export const dynamic = "force-dynamic";
 export async function POST(request) {
   try {
     const body = await request.json();
-    const { targetDataDir, strategy, dryRun, providerFilter } = body;
+    const {
+      direction,
+      externalDataDir,
+      targetDataDir, // backward-compat alias
+      strategy,
+      dryRun,
+      providerFilter,
+    } = body;
 
-    if (!targetDataDir) {
+    const dir = direction === "pull" ? "pull" : "push";
+    const externalDir = externalDataDir || targetDataDir;
+
+    if (!externalDir) {
       return NextResponse.json(
-        { error: "targetDataDir is required" },
+        { error: "externalDataDir (or targetDataDir) is required" },
         { status: 400 },
       );
     }
 
     const report = await executeMerge({
-      targetDataDir,
+      direction: dir,
+      externalDataDir: externalDir,
       strategy: strategy === "add-as-new" ? "add-as-new" : "skip",
       dryRun: dryRun !== false,
       providerFilter: Array.isArray(providerFilter) ? providerFilter : null,

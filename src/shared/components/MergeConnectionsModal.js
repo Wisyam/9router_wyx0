@@ -25,6 +25,7 @@ function StatusPill({ action }) {
 
 export default function MergeConnectionsModal({ isOpen, onClose }) {
   const [step, setStep] = useState(1);
+  const [direction, setDirection] = useState("push"); // "push" = this → other, "pull" = other → this
   const [targetDir, setTargetDir] = useState("");
   const [detecting, setDetecting] = useState(false);
   const [detected, setDetected] = useState([]);
@@ -36,6 +37,7 @@ export default function MergeConnectionsModal({ isOpen, onClose }) {
 
   const reset = useCallback(() => {
     setStep(1);
+    setDirection("push");
     setTargetDir("");
     setDetected([]);
     setLoading(false);
@@ -70,7 +72,7 @@ export default function MergeConnectionsModal({ isOpen, onClose }) {
 
   const handlePreview = useCallback(async () => {
     if (!targetDir.trim()) {
-      setError("Please enter the target data directory path");
+      setError("Please enter the other instance's data directory path");
       return;
     }
     setLoading(true);
@@ -79,7 +81,11 @@ export default function MergeConnectionsModal({ isOpen, onClose }) {
       const res = await fetch("/api/sync/merge-to-target", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ targetDataDir: targetDir.trim(), dryRun: true }),
+        body: JSON.stringify({
+          direction,
+          externalDataDir: targetDir.trim(),
+          dryRun: true,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Preview failed");
@@ -90,7 +96,7 @@ export default function MergeConnectionsModal({ isOpen, onClose }) {
     } finally {
       setLoading(false);
     }
-  }, [targetDir]);
+  }, [direction, targetDir]);
 
   const handleExecute = useCallback(async () => {
     setExecuting(true);
@@ -99,7 +105,11 @@ export default function MergeConnectionsModal({ isOpen, onClose }) {
       const res = await fetch("/api/sync/merge-to-target", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ targetDataDir: targetDir.trim(), dryRun: false }),
+        body: JSON.stringify({
+          direction,
+          externalDataDir: targetDir.trim(),
+          dryRun: false,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Merge failed");
@@ -110,7 +120,11 @@ export default function MergeConnectionsModal({ isOpen, onClose }) {
     } finally {
       setExecuting(false);
     }
-  }, [targetDir]);
+  }, [direction, targetDir]);
+
+  const isPull = direction === "pull";
+  const otherLabel = isPull ? "Source" : "Target";
+  const titleVerb = isPull ? "Import from" : "Export to";
 
   return (
     <Modal isOpen={isOpen} onClose={handleClose} title="Merge Connections" size="lg">
@@ -124,13 +138,55 @@ export default function MergeConnectionsModal({ isOpen, onClose }) {
 
         {step === 1 && (
           <>
+            {/* Direction toggle */}
+            <div className="flex flex-col gap-2">
+              <label className="text-sm font-medium text-text-main">Direction</label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setDirection("push")}
+                  className={cn(
+                    "flex flex-col items-start gap-1 rounded-lg border px-3 py-2.5 text-left transition-colors",
+                    direction === "push"
+                      ? "border-primary bg-primary/5 text-text-main"
+                      : "border-border bg-bg hover:border-primary/40"
+                  )}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="material-symbols-outlined text-[18px]">upload</span>
+                    <span className="text-sm font-medium">Push</span>
+                  </div>
+                  <p className="text-[11px] text-text-muted">This instance → other instance</p>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDirection("pull")}
+                  className={cn(
+                    "flex flex-col items-start gap-1 rounded-lg border px-3 py-2.5 text-left transition-colors",
+                    direction === "pull"
+                      ? "border-primary bg-primary/5 text-text-main"
+                      : "border-border bg-bg hover:border-primary/40"
+                  )}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="material-symbols-outlined text-[18px]">download</span>
+                    <span className="text-sm font-medium">Pull</span>
+                  </div>
+                  <p className="text-[11px] text-text-muted">Other instance → this instance</p>
+                </button>
+              </div>
+            </div>
+
             <p className="text-sm text-text-muted">
-              Transfer provider connections to another 9router instance on this machine.
-              Duplicate accounts (same provider + email) are skipped automatically.
+              {isPull
+                ? "Import provider connections from another 9router instance into this one. Duplicate accounts (same provider + email) are skipped automatically."
+                : "Transfer provider connections to another 9router instance on this machine. Duplicate accounts (same provider + email) are skipped automatically."}
             </p>
 
             <div className="flex flex-col gap-2">
-              <label className="text-sm font-medium text-text-main">Target DATA_DIR</label>
+              <label className="text-sm font-medium text-text-main">
+                {isPull ? "Source DATA_DIR (other instance)" : "Target DATA_DIR (other instance)"}
+              </label>
               <div className="flex gap-2">
                 <Input
                   placeholder="e.g. C:\Users\akbar\AppData\Roaming\9router"
@@ -172,7 +228,7 @@ export default function MergeConnectionsModal({ isOpen, onClose }) {
             <div className="flex justify-end gap-2 pt-2 border-t border-border">
               <Button variant="ghost" onClick={handleClose}>Cancel</Button>
               <Button variant="primary" icon="search" onClick={handlePreview} loading={loading} disabled={!targetDir.trim()}>
-                Preview Merge
+                Preview {isPull ? "Import" : "Export"}
               </Button>
             </div>
           </>
@@ -180,6 +236,18 @@ export default function MergeConnectionsModal({ isOpen, onClose }) {
 
         {step === 2 && preview && (
           <>
+            <div className="flex items-center gap-2 rounded-lg bg-bg border border-border px-3 py-2">
+              <span className="material-symbols-outlined text-[18px] text-primary">
+                {isPull ? "download" : "upload"}
+              </span>
+              <p className="text-xs text-text-muted">
+                <span className="font-medium text-text-main">{titleVerb}</span>{" "}
+                <span className="font-mono">{preview.sourceDataDir || "?"}</span>
+                {" → "}
+                <span className="font-mono">{preview.targetDataDir || "?"}</span>
+              </p>
+            </div>
+
             <div className="grid grid-cols-5 gap-2">
               <div className="rounded-lg bg-bg border border-border p-2.5 text-center">
                 <p className="text-base font-bold text-text-main">{preview.summary.totalSource}</p>
@@ -187,7 +255,7 @@ export default function MergeConnectionsModal({ isOpen, onClose }) {
               </div>
               <div className="rounded-lg bg-bg border border-border p-2.5 text-center">
                 <p className="text-base font-bold text-text-main">{preview.summary.totalTarget}</p>
-                <p className="text-[10px] text-text-muted">Target</p>
+                <p className="text-[10px] text-text-muted">{otherLabel === "Source" ? "Target (this)" : "Target"}</p>
               </div>
               <div className="rounded-lg bg-green-500/10 border border-green-500/20 p-2.5 text-center">
                 <p className="text-base font-bold text-green-600 dark:text-green-400">+{preview.summary.toAdd}</p>
@@ -284,12 +352,12 @@ export default function MergeConnectionsModal({ isOpen, onClose }) {
               <Button variant="ghost" onClick={() => setStep(1)}>Back</Button>
               <Button
                 variant="primary"
-                icon="merge_type"
+                icon={isPull ? "download" : "merge_type"}
                 onClick={handleExecute}
                 loading={executing}
                 disabled={!preview.summary.toAdd}
               >
-                Merge {preview.summary.toAdd} Connection{preview.summary.toAdd !== 1 ? "s" : ""}
+                {isPull ? "Import" : "Merge"} {preview.summary.toAdd} Connection{preview.summary.toAdd !== 1 ? "s" : ""}
               </Button>
             </div>
           </>
@@ -313,8 +381,8 @@ export default function MergeConnectionsModal({ isOpen, onClose }) {
                   result.errors?.length ? "text-red-600 dark:text-red-400" : "text-green-600 dark:text-green-400"
                 )}>
                   {result.errors?.length
-                    ? "Merge completed with errors"
-                    : `Successfully merged ${result.summary.toAdd} connection${result.summary.toAdd !== 1 ? "s" : ""}!`}
+                    ? `${isPull ? "Import" : "Merge"} completed with errors`
+                    : `Successfully ${isPull ? "imported" : "merged"} ${result.summary.toAdd} connection${result.summary.toAdd !== 1 ? "s" : ""}!`}
                 </p>
                 {result.errors?.map((e, i) => (
                   <p key={i} className="text-xs text-red-500 mt-1">{e}</p>

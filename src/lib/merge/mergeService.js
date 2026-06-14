@@ -3,7 +3,9 @@ import path from "node:path";
 import { v4 as uuidv4 } from "uuid";
 import { findDbFile, validateDataDir } from "./findTargetDb.js";
 import { getProviderConnections } from "../db/index.js";
+import { getAdapter } from "../db/driver.js";
 import { DATA_DIR } from "../dataDir.js";
+import { DATA_FILE as LOCAL_DB_FILE, BACKUPS_DIR as LOCAL_BACKUPS_DIR } from "../db/paths.js";
 
 const MERGE_HISTORY_DIR = path.join(DATA_DIR, "merge-history");
 const MAX_HISTORY = 20;
@@ -27,7 +29,7 @@ function fingerprint(conn) {
   return `${conn.provider}::${conn.id}`;
 }
 
-async function openTargetDb(dbPath) {
+async function openExternalDb(dbPath, { readonly = false } = {}) {
   let Database;
   try {
     const mod = await import("better-sqlite3");
@@ -35,41 +37,60 @@ async function openTargetDb(dbPath) {
   } catch {
     throw new Error("better-sqlite3 is required for merge. Install it: npm install better-sqlite3");
   }
-  const db = new Database(dbPath, { readonly: false });
+  const db = new Database(dbPath, { readonly });
   db.pragma("busy_timeout = 5000");
   return db;
 }
 
-async function readConnectionsFromDb(dbPath) {
-  const db = await openTargetDb(dbPath);
+function rowToConn(row) {
+  const extra = parseJson(row.data, {});
+  return {
+    ...extra,
+    id: row.id,
+    provider: row.provider,
+    authType: row.authType,
+    name: row.name,
+    email: row.email,
+    priority: row.priority,
+    isActive: row.isActive === 1,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+async function readConnectionsFromExternalDb(dbPath) {
+  const db = await openExternalDb(dbPath, { readonly: true });
   try {
     const rows = db.prepare("SELECT * FROM providerConnections").all();
-    return rows.map((row) => {
-      const extra = parseJson(row.data, {});
-      return {
-        ...extra,
-        id: row.id,
-        provider: row.provider,
-        authType: row.authType,
-        name: row.name,
-        email: row.email,
-        priority: row.priority,
-        isActive: row.isActive === 1,
-        createdAt: row.createdAt,
-        updatedAt: row.updatedAt,
-      };
-    });
+    return rows.map(rowToConn);
   } finally {
     db.close();
   }
 }
 
-function backupTargetDb(dbPath) {
+function backupDbFile(dbPath, label = "pre-merge") {
   const backupDir = path.join(path.dirname(dbPath), "backups");
   fs.mkdirSync(backupDir, { recursive: true });
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-  const backupPath = path.join(backupDir, `pre-merge-${timestamp}.sqlite`);
+  const backupPath = path.join(backupDir, `${label}-${timestamp}.sqlite`);
   fs.copyFileSync(dbPath, backupPath);
+  return backupPath;
+}
+
+async function backupLocalDb(label = "pre-merge") {
+  // Ensure WAL is checkpointed so the backup is consistent
+  try {
+    const adapter = await getAdapter();
+    if (typeof adapter.pragma === "function") {
+      try { adapter.pragma("wal_checkpoint(TRUNCATE)"); } catch {}
+    } else if (typeof adapter.exec === "function") {
+      try { adapter.exec("PRAGMA wal_checkpoint(TRUNCATE)"); } catch {}
+    }
+  } catch {}
+  fs.mkdirSync(LOCAL_BACKUPS_DIR, { recursive: true });
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const backupPath = path.join(LOCAL_BACKUPS_DIR, `${label}-${timestamp}.sqlite`);
+  fs.copyFileSync(LOCAL_DB_FILE, backupPath);
   return backupPath;
 }
 
@@ -114,17 +135,7 @@ export function diffConnections(sourceConns, targetConns) {
   return { toAdd, toSkip };
 }
 
-export async function executeMerge({ targetDataDir, strategy, dryRun, providerFilter }) {
-  const validation = validateDataDir(targetDataDir);
-  if (!validation.valid) {
-    throw new Error(validation.reason);
-  }
-
-  const targetDbPath = validation.dbFile;
-  const sourceConns = await exportLocalConnections(providerFilter);
-  const targetConns = await readConnectionsFromDb(targetDbPath);
-  const { toAdd, toSkip } = diffConnections(sourceConns, targetConns);
-
+function buildReport({ direction, externalDataDir, externalDbFile, strategy, dryRun, sourceConns, targetConns, toAdd, toSkip }) {
   const allProviders = new Set([
     ...sourceConns.map((c) => c.provider),
     ...targetConns.map((c) => c.provider),
@@ -156,10 +167,21 @@ export async function executeMerge({ targetDataDir, strategy, dryRun, providerFi
       };
     });
 
-  const report = {
+  const localResolved = path.resolve(DATA_DIR);
+  const sourceDataDir = direction === "pull" ? externalDataDir : localResolved;
+  const targetDataDir = direction === "pull" ? localResolved : externalDataDir;
+  const sourceDbFile = direction === "pull" ? externalDbFile : LOCAL_DB_FILE;
+  const targetDbFile = direction === "pull" ? LOCAL_DB_FILE : externalDbFile;
+
+  return {
     timestamp: new Date().toISOString(),
-    targetDataDir: validation.dataDir,
-    targetDbFile: targetDbPath,
+    direction,
+    sourceDataDir,
+    targetDataDir,
+    sourceDbFile,
+    targetDbFile,
+    // Backward-compat aliases (older history readers expect these fields)
+    targetDbFile_legacy: targetDbFile,
     strategy: strategy || "skip",
     dryRun: !!dryRun,
     summary: {
@@ -185,26 +207,48 @@ export async function executeMerge({ targetDataDir, strategy, dryRun, providerFi
     backupPath: null,
     errors: [],
   };
+}
 
-  if (dryRun || toAdd.length === 0) {
-    return report;
-  }
+function insertConnRowsExternal(db, toAdd) {
+  const insertStmt = db.prepare(
+    `INSERT INTO providerConnections(id, provider, authType, name, email, priority, isActive, data, createdAt, updatedAt)
+     VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  );
+  const writeAll = db.transaction(() => {
+    for (const conn of toAdd) {
+      const { id, provider, authType, name, email, priority, isActive, createdAt, updatedAt, _newId, _reason, ...rest } = conn;
+      const finalId = _newId || id;
+      const now = new Date().toISOString();
+      insertStmt.run(
+        finalId,
+        provider,
+        authType || "oauth",
+        name || null,
+        email || null,
+        priority || null,
+        isActive === false ? 0 : 1,
+        stringifyJson(rest),
+        createdAt || now,
+        updatedAt || now,
+      );
+    }
+  });
+  writeAll();
+  try { db.pragma("wal_checkpoint(TRUNCATE)"); } catch {}
+}
 
-  report.backupPath = backupTargetDb(targetDbPath);
-
-  const db = await openTargetDb(targetDbPath);
-  try {
-    const insertStmt = db.prepare(
-      `INSERT INTO providerConnections(id, provider, authType, name, email, priority, isActive, data, createdAt, updatedAt)
-       VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    );
-
-    const writeAll = db.transaction(() => {
-      for (const conn of toAdd) {
-        const { id, provider, authType, name, email, priority, isActive, createdAt, updatedAt, _newId, _reason, ...rest } = conn;
-        const finalId = _newId || id;
-        const now = new Date().toISOString();
-        insertStmt.run(
+async function insertConnRowsLocal(toAdd) {
+  // Use the active local adapter so we don't conflict with the running dev server's DB lock.
+  const adapter = await getAdapter();
+  adapter.transaction(() => {
+    for (const conn of toAdd) {
+      const { id, provider, authType, name, email, priority, isActive, createdAt, updatedAt, _newId, _reason, ...rest } = conn;
+      const finalId = _newId || id;
+      const now = new Date().toISOString();
+      adapter.run(
+        `INSERT INTO providerConnections(id, provider, authType, name, email, priority, isActive, data, createdAt, updatedAt)
+         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
           finalId,
           provider,
           authType || "oauth",
@@ -215,16 +259,97 @@ export async function executeMerge({ targetDataDir, strategy, dryRun, providerFi
           stringifyJson(rest),
           createdAt || now,
           updatedAt || now,
-        );
-      }
-    });
+        ],
+      );
+    }
+  });
+}
 
-    writeAll();
-    try { db.pragma("wal_checkpoint(TRUNCATE)"); } catch {}
-  } catch (err) {
-    report.errors.push(err.message);
-  } finally {
-    db.close();
+/**
+ * Cross-instance merge.
+ *
+ * @param {Object} opts
+ * @param {"push"|"pull"} [opts.direction="push"] - "push" = local → external, "pull" = external → local
+ * @param {string} opts.externalDataDir - Other 9router instance's data dir (the "remote" side)
+ * @param {string} [opts.targetDataDir] - Backward-compat alias for externalDataDir
+ * @param {string} [opts.strategy] - "skip" (default) or "add-as-new"
+ * @param {boolean} [opts.dryRun=true]
+ * @param {string[]} [opts.providerFilter]
+ */
+export async function executeMerge(opts) {
+  const direction = opts.direction === "pull" ? "pull" : "push";
+  const externalDataDir = opts.externalDataDir || opts.targetDataDir;
+  const { strategy, dryRun, providerFilter } = opts;
+
+  if (!externalDataDir) {
+    throw new Error("externalDataDir (or targetDataDir) is required");
+  }
+
+  const validation = validateDataDir(externalDataDir);
+  if (!validation.valid) {
+    throw new Error(validation.reason);
+  }
+  const externalDbPath = validation.dbFile;
+
+  // Read source + target according to direction
+  let sourceConns;
+  let targetConns;
+  if (direction === "pull") {
+    sourceConns = await readConnectionsFromExternalDb(externalDbPath);
+    if (providerFilter && providerFilter.length > 0) {
+      const filterSet = new Set(providerFilter.map((p) => p.toLowerCase()));
+      sourceConns = sourceConns.filter((c) => filterSet.has(c.provider.toLowerCase()));
+    }
+    targetConns = await getProviderConnections();
+  } else {
+    sourceConns = await exportLocalConnections(providerFilter);
+    targetConns = await readConnectionsFromExternalDb(externalDbPath);
+  }
+
+  const { toAdd, toSkip } = diffConnections(sourceConns, targetConns);
+
+  const report = buildReport({
+    direction,
+    externalDataDir: validation.dataDir,
+    externalDbFile: externalDbPath,
+    strategy,
+    dryRun,
+    sourceConns,
+    targetConns,
+    toAdd,
+    toSkip,
+  });
+
+  if (dryRun || toAdd.length === 0) {
+    return report;
+  }
+
+  // Real merge: backup the *target* (the side being modified) then INSERT
+  if (direction === "pull") {
+    try {
+      report.backupPath = await backupLocalDb("pre-merge-pull");
+    } catch (err) {
+      report.errors.push(`Local backup failed: ${err.message}`);
+    }
+    try {
+      await insertConnRowsLocal(toAdd);
+    } catch (err) {
+      report.errors.push(err.message);
+    }
+  } else {
+    try {
+      report.backupPath = backupDbFile(externalDbPath, "pre-merge");
+    } catch (err) {
+      report.errors.push(`External backup failed: ${err.message}`);
+    }
+    const db = await openExternalDb(externalDbPath);
+    try {
+      insertConnRowsExternal(db, toAdd);
+    } catch (err) {
+      report.errors.push(err.message);
+    } finally {
+      db.close();
+    }
   }
 
   return report;
