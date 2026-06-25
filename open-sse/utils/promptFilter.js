@@ -1,7 +1,8 @@
-// Literal case-insensitive prompt filter application.
+// Regex (case-insensitive, global) prompt filter application.
 // Filters are applied sequentially by priority (already sorted ASC by the
 // repo). Text replaced by a higher-priority filter is marked and skipped by
 // lower-priority filters — no cascade re-processing.
+// Invalid regex patterns are silently skipped to avoid breaking requests.
 
 function applyFiltersToText(text, filters) {
   if (!text || filters.length === 0) return text;
@@ -12,7 +13,13 @@ function applyFiltersToText(text, filters) {
     const { pattern, replacement } = filter;
     if (!pattern) continue;
 
-    const needle = pattern.toLowerCase();
+    let regex;
+    try {
+      regex = new RegExp(pattern, "gi");
+    } catch {
+      continue;
+    }
+
     const next = [];
 
     for (const seg of segments) {
@@ -21,13 +28,12 @@ function applyFiltersToText(text, filters) {
         continue;
       }
 
-      const hay = seg.text.toLowerCase();
+      regex.lastIndex = 0;
       const matches = [];
-      let from = 0;
-      let at;
-      while ((at = hay.indexOf(needle, from)) !== -1) {
-        matches.push(at);
-        from = at + needle.length;
+      let m;
+      while ((m = regex.exec(seg.text)) !== null) {
+        matches.push({ index: m.index, length: m[0].length });
+        if (m[0].length === 0) regex.lastIndex++;
       }
 
       if (matches.length === 0) {
@@ -36,11 +42,14 @@ function applyFiltersToText(text, filters) {
       }
 
       let lastEnd = 0;
-      for (const pos of matches) {
-        if (pos > lastEnd)
-          next.push({ text: seg.text.slice(lastEnd, pos), replaced: false });
+      for (const match of matches) {
+        if (match.index > lastEnd)
+          next.push({
+            text: seg.text.slice(lastEnd, match.index),
+            replaced: false,
+          });
         next.push({ text: replacement, replaced: true });
-        lastEnd = pos + needle.length;
+        lastEnd = match.index + match.length;
       }
       if (lastEnd < seg.text.length)
         next.push({ text: seg.text.slice(lastEnd), replaced: false });

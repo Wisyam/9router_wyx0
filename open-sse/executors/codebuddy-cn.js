@@ -1,5 +1,5 @@
 import { DefaultExecutor } from "./default.js";
-import { getCachedActiveFilters } from "@/lib/db/repos/promptFiltersRepo.js";
+import { getActiveFiltersByProvider } from "@/lib/db/repos/promptFiltersRepo.js";
 import { applyFiltersToMessages } from "../utils/promptFilter.js";
 
 const SAFE_RETRY_MARKER = Symbol("codebuddyCnSafeRetry");
@@ -100,15 +100,24 @@ export class CodeBuddyExecutor extends DefaultExecutor {
       if (!eff) transformed.reasoning_effort = "medium";
       transformed.reasoning_summary = "auto";
     }
-
-    const filters = getCachedActiveFilters("codebuddy-cn");
-    if (filters.length > 0 && Array.isArray(transformed.messages)) {
-      transformed.messages = applyFiltersToMessages(transformed.messages, filters);
-    }
     return transformed;
   }
 
   async execute(args) {
+    if (!args.body?.[SAFE_RETRY_MARKER]) {
+      try {
+        const filters = await getActiveFiltersByProvider("codebuddy-cn");
+        if (filters.length > 0 && Array.isArray(args.body?.messages)) {
+          args.body = {
+            ...args.body,
+            messages: applyFiltersToMessages(args.body.messages, filters),
+          };
+        }
+      } catch {
+        // Filter failures must never break the request
+      }
+    }
+
     const result = await super.execute(args);
     if (result.response.ok || args.body?.[SAFE_RETRY_MARKER]) return result;
 
