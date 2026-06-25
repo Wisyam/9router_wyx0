@@ -1,4 +1,6 @@
 import { DefaultExecutor } from "./default.js";
+import { getCachedActiveFilters } from "@/lib/db/repos/promptFiltersRepo.js";
+import { applyFiltersToMessages } from "../utils/promptFilter.js";
 
 const SAFE_RETRY_MARKER = Symbol("codebuddyCnSafeRetry");
 const SAFE_SYSTEM_PROMPT = "You are a concise coding assistant. Answer the user's latest request directly.";
@@ -97,6 +99,11 @@ export class CodeBuddyExecutor extends DefaultExecutor {
     } else {
       if (!eff) transformed.reasoning_effort = "medium";
       transformed.reasoning_summary = "auto";
+    }
+
+    const filters = getCachedActiveFilters("codebuddy-cn");
+    if (filters.length > 0 && Array.isArray(transformed.messages)) {
+      transformed.messages = applyFiltersToMessages(transformed.messages, filters);
     }
     return transformed;
   }
