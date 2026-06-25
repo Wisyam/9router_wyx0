@@ -17,5 +17,8 @@ export {
   getCustomModels, addCustomModel, deleteCustomModel,
   getMitmAlias, setMitmAliasAll,
   getPricing, getPricingForModel, updatePricing, resetPricing, resetAllPricing,
+  getPromptFilters, getPromptFilterById, getActiveFiltersByProvider,
+  getCachedActiveFilters,
+  createPromptFilter, updatePromptFilter, deletePromptFilter,
   exportDb, importDb,
 } from "./db/index.js";
