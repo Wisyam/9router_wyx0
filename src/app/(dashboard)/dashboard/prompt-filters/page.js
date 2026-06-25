@@ -498,7 +498,7 @@ function FilterFormModal({ isOpen, filter, onClose, onSave }) {
 
         <div className="flex flex-col gap-1.5">
           <label className="text-sm font-medium">
-            Pattern <span className="text-red-500">*</span>
+            Pattern (Regex) <span className="text-red-500">*</span>
           </label>
           <textarea
             className="w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text-main placeholder-text-muted/50 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary min-h-[80px] font-mono resize-y"
