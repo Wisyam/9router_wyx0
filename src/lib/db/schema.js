@@ -148,6 +148,24 @@ export const TABLES = {
       "CREATE INDEX IF NOT EXISTS idx_rd_conn ON requestDetails(connectionId)",
     ],
   },
+  promptFilters: {
+    columns: {
+      id: "TEXT PRIMARY KEY",
+      name: "TEXT",
+      provider: "TEXT NOT NULL",
+      pattern: "TEXT NOT NULL",
+      replacement: "TEXT NOT NULL",
+      isActive: "INTEGER DEFAULT 1",
+      priority: "INTEGER DEFAULT 0",
+      createdAt: "TEXT NOT NULL",
+      updatedAt: "TEXT NOT NULL",
+    },
+    indexes: [
+      "CREATE INDEX IF NOT EXISTS idx_pf_provider ON promptFilters(provider)",
+      "CREATE INDEX IF NOT EXISTS idx_pf_provider_active ON promptFilters(provider, isActive)",
+      "CREATE INDEX IF NOT EXISTS idx_pf_priority ON promptFilters(provider, isActive, priority)",
+    ],
+  },
 };
 
 export function buildCreateTableSql(name, def) {
