@@ -171,11 +171,10 @@ export default function PromptFiltersPage() {
   };
 
   const visibleFilters = filters.filter(matchSearch).sort((a, b) => {
-    // Sort by priority (descending) then by createdAt (descending)
     const pa = a.priority ?? 0;
     const pb = b.priority ?? 0;
-    if (pa !== pb) return pb - pa;
-    return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+    if (pa !== pb) return pa - pb;
+    return new Date(a.createdAt || 0) - new Date(b.createdAt || 0);
   });
 
   if (loading) {
@@ -408,13 +407,7 @@ function FilterFormModal({ isOpen, filter, onClose, onSave }) {
   const [errors, setErrors] = useState({});
 
   const providerOptions = [
-    { value: "global", label: "Global (All Providers)" },
-    { value: "codebuddy-cn", label: "Codebuddy CN (codebuddy-cn)" },
-    { value: "cc", label: "Claude Code (cc)" },
-    { value: "cx", label: "Codex (cx)" },
-    { value: "gh", label: "GitHub (gh)" },
-    { value: "kr", label: "Kiro (kr)" },
-    { value: "glm", label: "GLM (glm)" },
+    { value: "codebuddy-cn", label: "CodeBuddy CN (codebuddy-cn)" },
   ];
 
   const handleChange = (field, value) => {
@@ -505,7 +498,7 @@ function FilterFormModal({ isOpen, filter, onClose, onSave }) {
 
         <div className="flex flex-col gap-1.5">
           <label className="text-sm font-medium">
-            Pattern (String or Regex) <span className="text-red-500">*</span>
+            Pattern <span className="text-red-500">*</span>
           </label>
           <textarea
             className="w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text-main placeholder-text-muted/50 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary min-h-[80px] font-mono resize-y"
@@ -537,7 +530,7 @@ function FilterFormModal({ isOpen, filter, onClose, onSave }) {
             placeholder="0"
           />
           <p className="text-[10px] text-text-muted mt-0.5">
-            Higher numbers run first
+            Lower numbers run first
           </p>
         </div>
 
