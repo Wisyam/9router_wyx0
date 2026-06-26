@@ -212,6 +212,17 @@ function importLegacyDetails(adapter, data) {
   }
 }
 
+// ─── Seed default data (idempotent, once per DB) ────────────────────────
+function seedDefaults(adapter) {
+  if (getMetaSync(adapter, "promptFiltersSeeded", "0") === "1") return;
+  const now = new Date().toISOString();
+  adapter.run(
+    `INSERT OR IGNORE INTO promptFilters(id, name, provider, pattern, replacement, isActive, priority, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ["default-sisyphus-omo", "Sisyphus - OmO", "codebuddy-cn", "Powerful AI Agent", "Advanced AI Agent", 0, 0, now, now]
+  );
+  setMetaSync(adapter, "promptFiltersSeeded", "1");
+}
+
 // ─── Main entry ──────────────────────────────────────────────────────────
 export async function runMigrationOnce(adapter) {
   if (_migratedAdapters.has(adapter)) return;
@@ -227,7 +238,10 @@ export async function runMigrationOnce(adapter) {
   // 2. Additive sync (auto add missing columns/indexes declared in TABLES)
   syncSchemaFromTables(adapter);
 
-  // 3. One-time legacy JSON import (only if DB was fresh on entry)
+  // 3. Seed default data (idempotent, once per DB)
+  seedDefaults(adapter);
+
+  // 4. One-time legacy JSON import (only if DB was fresh on entry)
   const alreadyImported = fs.existsSync(MIGRATED_MARKER);
   const legacyMain = readJsonSafe(LEGACY_FILES.main);
   const legacyUsage = readJsonSafe(LEGACY_FILES.usage);
@@ -268,7 +282,7 @@ export async function runMigrationOnce(adapter) {
     return;
   }
 
-  // 4. App version bump → backup data.sqlite (safety net before user-side upgrade)
+  // 5. App version bump → backup data.sqlite (safety net before user-side upgrade)
   const oldVer = getMetaSync(adapter, "appVersion", null);
   const newVer = getAppVersion();
   if (oldVer && oldVer !== newVer) {
