@@ -106,7 +106,28 @@ export function createSSEStream(options = {}) {
             try {
               const parsed = JSON.parse(trimmed.slice(5).trim());
 
-              const idFixed = fixInvalidId(parsed);
+              let idFixed = fixInvalidId(parsed);
+
+              // Normalize non-standard fields from Tencent gateway:
+              // finish_reason:"" → null (empty string is non-null, client treats as "finished")
+              // content:"" on reasoning deltas → delete (presence signals thought boundary)
+              // null/empty non-standard delta fields → delete
+              if (provider === "codebuddy-cn") {
+                const choice = parsed.choices?.[0];
+                if (choice) {
+                  if (choice.finish_reason === "") choice.finish_reason = null;
+                  const delta = choice.delta;
+                  if (delta) {
+                    if (delta.content === "" && delta.reasoning_content) delete delta.content;
+                    if (delta.function_call === null) delete delta.function_call;
+                    if (delta.refusal === "") delete delta.refusal;
+                    if (Array.isArray(delta.tool_calls) && delta.tool_calls.length === 0) delete delta.tool_calls;
+                    if (delta.extra_fields === null) delete delta.extra_fields;
+                  }
+                }
+                if (parsed.usage === null) delete parsed.usage;
+                idFixed = true;
+              }
 
               // Ensure OpenAI-required fields are present on streaming chunks (Letta compat)
               let fieldsInjected = false;
