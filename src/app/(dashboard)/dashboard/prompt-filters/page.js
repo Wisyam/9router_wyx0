@@ -335,8 +335,7 @@ function FilterCard({ filter, onEdit, onDelete, onToggle }) {
           <Toggle
             size="sm"
             checked={filter.isActive}
-            onChange={(e) => onToggle(e.target.checked)}
-            title={filter.isActive ? "Disable filter" : "Enable filter"}
+            onChange={onToggle}
           />
         </div>
       </div>
@@ -456,7 +455,7 @@ function FilterFormModal({ isOpen, filter, onClose, onSave }) {
             </span>
             <Toggle
               checked={formData.isActive}
-              onChange={(e) => handleChange("isActive", e.target.checked)}
+              onChange={(checked) => handleChange("isActive", checked)}
             />
           </div>
         </div>
