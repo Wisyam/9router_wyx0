@@ -1,4 +1,6 @@
 import { DefaultExecutor } from "./default.js";
+import { getActiveFiltersByProvider } from "@/lib/db/repos/promptFiltersRepo.js";
+import { applyFiltersToMessages } from "../utils/promptFilter.js";
 
 const SAFE_RETRY_MARKER = Symbol("codebuddyCnSafeRetry");
 const SAFE_SYSTEM_PROMPT = "You are a concise coding assistant. Answer the user's latest request directly.";
@@ -102,6 +104,20 @@ export class CodeBuddyExecutor extends DefaultExecutor {
   }
 
   async execute(args) {
+    if (!args.body?.[SAFE_RETRY_MARKER]) {
+      try {
+        const filters = await getActiveFiltersByProvider("codebuddy-cn");
+        if (filters.length > 0 && Array.isArray(args.body?.messages)) {
+          args.body = {
+            ...args.body,
+            messages: applyFiltersToMessages(args.body.messages, filters),
+          };
+        }
+      } catch {
+        // Filter failures must never break the request
+      }
+    }
+
     const result = await super.execute(args);
     if (result.response.ok || args.body?.[SAFE_RETRY_MARKER]) return result;
 

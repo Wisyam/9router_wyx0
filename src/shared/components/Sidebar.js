@@ -27,6 +27,7 @@ const navItems = [
   { href: "/dashboard/mitm", label: "MITM", icon: "security" },
   { href: "/dashboard/automation", label: "Automation", icon: "automation" },
   { href: "/dashboard/cli-tools", label: "CLI Tools", icon: "terminal" },
+  { href: "/dashboard/prompt-filters", label: "Prompt Filters", icon: "filter_alt" },
 ];
 
 const debugItems = [
