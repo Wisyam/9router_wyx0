@@ -2,6 +2,8 @@ import crypto from "node:crypto";
 import { DefaultExecutor } from "./default.js";
 import { PROVIDERS } from "../config/providers.js";
 
+console.log("[AUTOCLAW] executor module loaded");
+
 const APP_ID = "100003";
 const APP_KEY = "38d2391985e2369a5fb8227d8e6cd5e5";
 
