@@ -62,6 +62,15 @@ export class AutoclawExecutor extends DefaultExecutor {
   async execute(args) {
     this._currentModel = args.model;
     try {
+      const headers = this.buildHeaders(args.credentials, args.stream);
+      const body = this.transformRequest(args.model, args.body, args.stream, args.credentials);
+      console.log("[AUTOCLAW DEBUG] URL:", this.config.baseUrl);
+      console.log("[AUTOCLAW DEBUG] headers keys:", Object.keys(headers).join(","));
+      console.log("[AUTOCLAW DEBUG] X-Request-Model:", headers["X-Request-Model"]);
+      console.log("[AUTOCLAW DEBUG] X-Authorization (first 20):", String(headers["X-Authorization"]).slice(0, 20));
+      console.log("[AUTOCLAW DEBUG] body keys:", Object.keys(body).join(","));
+      console.log("[AUTOCLAW DEBUG] body.model:", body.model);
+      console.log("[AUTOCLAW DEBUG] body.stream:", body.stream);
       return await super.execute(args);
     } finally {
       this._currentModel = null;
