@@ -472,14 +472,42 @@ async function waitForFirstVisibleLocator(page, selector, { timeout = 15_000, po
   return null;
 }
 
+async function humanType(locator, value, { timeout = 15_000 } = {}) {
+  if (!locator || value == null) return false;
+  const text = String(value);
+
+  try {
+    await locator.click({ timeout: 5_000 });
+  } catch {
+    /* noop */
+  }
+  try {
+    await locator.fill("");
+  } catch {
+    /* noop */
+  }
+
+  for (let i = 0; i < text.length; i++) {
+    await locator.press(text[i], { timeout });
+    const baseDelay = 30 + Math.floor(Math.random() * 120);
+    const longPause = Math.random() < 0.08 ? 200 + Math.floor(Math.random() * 400) : 0;
+    await new Promise((resolve) => setTimeout(resolve, baseDelay + longPause));
+  }
+
+  let observed = "";
+  try {
+    observed = await locator.inputValue();
+  } catch {
+    observed = "";
+  }
+  return observed === text;
+}
+
 async function fillInputResilient(locator, value, { timeout = 15_000 } = {}) {
   if (!locator || value == null) return false;
 
-  try {
-    await locator.fill(value, { timeout });
-  } catch {
-    // swallow; verification + fallback below will decide
-  }
+  const filled = await humanType(locator, value, { timeout });
+  if (filled) return true;
 
   let observed = "";
   try {
@@ -489,8 +517,6 @@ async function fillInputResilient(locator, value, { timeout = 15_000 } = {}) {
   }
   if (observed === value) return true;
 
-  // Fallback for React/Vue-controlled inputs where .fill() bypasses the
-  // framework's onChange wiring and the value snaps back to empty.
   try {
     await locator.click({ timeout: 5_000 });
   } catch {
@@ -696,7 +722,7 @@ async function fillProviderOnboardingDefaults(page) {
       const currentValue = await locator.inputValue().catch(() => "");
       if (currentValue) continue;
 
-      const didFill = await locator.fill(value, { timeout: 5_000 }).then(() => true).catch(() => false);
+      const didFill = await humanType(locator, value, { timeout: 5_000 }).catch(() => false);
       if (didFill) filled = true;
     }
   }
