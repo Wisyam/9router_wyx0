@@ -37,6 +37,10 @@ const NEXT_BUTTON_SELECTORS = [
   'div[role="button"]:has-text("Berikutnya")',
   '#identifierNext button',
   '#passwordNext button',
+  'button:has-text("下一步")',
+  'button:has-text("继续")',
+  'div[role="button"]:has-text("下一步")',
+  'div[role="button"]:has-text("继续")',
 ];
 
 const APPROVE_BUTTON_SELECTORS = [
@@ -78,6 +82,24 @@ const APPROVE_BUTTON_SELECTORS = [
   'div[role="button"]:has-text("I understand")',
   'input[type="button"][value="Saya mengerti"]',
   'input[type="submit"][value="Saya mengerti"]',
+  'button:has-text("允许")',
+  'button:has-text("继续")',
+  'button:has-text("下一步")',
+  'button:has-text("是")',
+  'button:has-text("接受")',
+  'button:has-text("同意")',
+  'button:has-text("我了解")',
+  'button:has-text("我明白")',
+  'button:has-text("好的")',
+  'button:has-text("明白了")',
+  '[role="button"]:has-text("允许")',
+  '[role="button"]:has-text("继续")',
+  '[role="button"]:has-text("下一步")',
+  '[role="button"]:has-text("同意")',
+  '[role="button"]:has-text("我了解")',
+  '[role="button"]:has-text("好的")',
+  'input[type="submit"][value="同意"]',
+  'input[type="submit"][value="我了解"]',
 ];
 
 const SKIP_BUTTON_SELECTORS = [
@@ -89,6 +111,13 @@ const SKIP_BUTTON_SELECTORS = [
   'button:has-text("Tidak sekarang")',
   'div[role="button"]:has-text("Skip")',
   'div[role="button"]:has-text("Not now")',
+  'button:has-text("跳过")',
+  'button:has-text("暂不")',
+  'button:has-text("以后再说")',
+  'button:has-text("不，谢谢")',
+  'button:has-text("现在不用")',
+  'div[role="button"]:has-text("跳过")',
+  'div[role="button"]:has-text("暂不")',
 ];
 
 const GOOGLE_LOGIN_BUTTON_SELECTORS = [
@@ -206,6 +235,14 @@ const INVALID_CREDENTIAL_MARKERS = [
   "couldn't sign you in",
   "invalid email or password",
   "password is incorrect",
+  "密码错误",
+  "密码不正确",
+  "找不到该 google 帐号",
+  "找不到该 google 账号",
+  "无法登录",
+  "无法为您登录",
+  "请输入有效的电子邮件",
+  "电子邮件或密码无效",
 ];
 
 const MANUAL_ASSIST_MARKERS = [
@@ -222,6 +259,17 @@ const MANUAL_ASSIST_MARKERS = [
   "unusual activity detected",
   "captcha",
   "try again later",
+  "两步验证",
+  "双重验证",
+  "验证您的身份",
+  "确认是您本人",
+  "检查您的手机",
+  "恢复邮箱",
+  "恢复电话",
+  "已阻止可疑的登录",
+  "检测到异常活动",
+  "验证码",
+  "请稍后重试",
 ];
 
 const RESTRICTED_ACCOUNT_MARKERS = [
@@ -245,6 +293,19 @@ const RESTRICTED_ACCOUNT_MARKERS = [
   "akun dibatasi",
   "akun diblokir",
   "akun ditangguhkan",
+  "帐号已受限",
+  "账号已受限",
+  "帐号已被暂停",
+  "账号已被暂停",
+  "帐号已被停用",
+  "账号已被停用",
+  "帐号已被禁用",
+  "账号已被禁用",
+  "帐号已被封禁",
+  "账号已被封禁",
+  "访问被拒绝",
+  "帐号已被锁定",
+  "账号已被锁定",
 ];
 
 const GOOGLE_ONBOARDING_MARKERS = [
@@ -260,6 +321,14 @@ const GOOGLE_ONBOARDING_MARKERS = [
   "tambahkan nomor telepon pemulihan",
   "choose your settings",
   "pilih setelan anda",
+  "欢迎使用您的新 google 帐号",
+  "欢迎使用您的新 google 账号",
+  "欢迎使用您的新帐号",
+  "欢迎使用您的新账号",
+  "隐私权和条款",
+  "个性化您的 google 服务",
+  "添加恢复电话",
+  "选择您的设置",
 ];
 
 const GOOGLE_WORKSPACE_WELCOME_MARKERS = [
@@ -269,6 +338,10 @@ const GOOGLE_WORKSPACE_WELCOME_MARKERS = [
   "administrator anda memutuskan layanan",
   "your organisation administrator manages",
   "your organization administrator manages",
+  "欢迎使用您的新帐号",
+  "欢迎使用您的新账号",
+  "您的管理员决定",
+  "您的组织管理员管理",
 ];
 
 const KIRO_CALLBACK_PREFIX = "kiro://kiro.kiroAgent/authenticate-success";
@@ -399,14 +472,58 @@ async function waitForFirstVisibleLocator(page, selector, { timeout = 15_000, po
   return null;
 }
 
+async function humanType(locator, value, { timeout = 15_000 } = {}) {
+  if (!locator || value == null) return false;
+  const text = String(value);
+
+  try {
+    await locator.click({ timeout: 5_000 });
+    await new Promise((resolve) => setTimeout(resolve, 200 + Math.floor(Math.random() * 400)));
+  } catch {
+    /* noop */
+  }
+
+  try {
+    await locator.press("Control+a");
+    await new Promise((resolve) => setTimeout(resolve, 50 + Math.floor(Math.random() * 100)));
+    await locator.press("Delete");
+    await new Promise((resolve) => setTimeout(resolve, 150 + Math.floor(Math.random() * 300)));
+  } catch {
+    try { await locator.fill(""); } catch {}
+  }
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+
+    if (Math.random() < 0.02 && i + 1 < text.length) {
+      const wrongChar = "abcdefghijklmnopqrstuvwxyz0123456789"[Math.floor(Math.random() * 36)];
+      await locator.press(wrongChar, { timeout });
+      await new Promise((resolve) => setTimeout(resolve, 80 + Math.floor(Math.random() * 150)));
+      await locator.press("Backspace", { timeout });
+      await new Promise((resolve) => setTimeout(resolve, 50 + Math.floor(Math.random() * 100)));
+    }
+
+    await locator.press(char, { timeout });
+
+    const baseDelay = 50 + Math.floor(Math.random() * 130);
+    const longPause = Math.random() < 0.06 ? 300 + Math.floor(Math.random() * 500) : 0;
+    await new Promise((resolve) => setTimeout(resolve, baseDelay + longPause));
+  }
+
+  let observed = "";
+  try {
+    observed = await locator.inputValue();
+  } catch {
+    observed = "";
+  }
+  return observed === text;
+}
+
 async function fillInputResilient(locator, value, { timeout = 15_000 } = {}) {
   if (!locator || value == null) return false;
 
-  try {
-    await locator.fill(value, { timeout });
-  } catch {
-    // swallow; verification + fallback below will decide
-  }
+  const filled = await humanType(locator, value, { timeout });
+  if (filled) return true;
 
   let observed = "";
   try {
@@ -416,8 +533,6 @@ async function fillInputResilient(locator, value, { timeout = 15_000 } = {}) {
   }
   if (observed === value) return true;
 
-  // Fallback for React/Vue-controlled inputs where .fill() bypasses the
-  // framework's onChange wiring and the value snaps back to empty.
   try {
     await locator.click({ timeout: 5_000 });
   } catch {
@@ -623,7 +738,7 @@ async function fillProviderOnboardingDefaults(page) {
       const currentValue = await locator.inputValue().catch(() => "");
       if (currentValue) continue;
 
-      const didFill = await locator.fill(value, { timeout: 5_000 }).then(() => true).catch(() => false);
+      const didFill = await humanType(locator, value, { timeout: 5_000 }).catch(() => false);
       if (didFill) filled = true;
     }
   }
@@ -1251,18 +1366,21 @@ export async function runGoogleAccountAutomation({
 
   reportStep(openingStep, openingMessage);
   await page.goto(authUrl, { waitUntil: "domcontentloaded", timeout: 60_000 });
-  await page.waitForTimeout(2_000);
+  await page.waitForTimeout(1500 + Math.floor(Math.random() * 1500));
 
   await handleProviderLoginGate(page, reportStep);
 
   const emailInput = await waitForFirstVisibleLocator(page, EMAIL_INPUT_SELECTOR, { timeout: 15_000 });
   if (emailInput) {
     reportStep("entering_email", "Entering Google email");
+    await page.mouse.move(100 + Math.floor(Math.random() * 400), 200 + Math.floor(Math.random() * 300));
+    await page.waitForTimeout(300 + Math.floor(Math.random() * 500));
     const filled = await fillInputResilient(emailInput, email);
     if (!filled) {
       reportStep("email_fill_failed", "Could not fill the Google email field; will retry in the polling loop");
     } else {
       reportStep("submitting_email", "Submitting email");
+      await page.waitForTimeout(500 + Math.floor(Math.random() * 500));
       await clickFirstVisible(page, NEXT_BUTTON_SELECTORS);
     }
   }
@@ -1347,9 +1465,13 @@ export async function runGoogleAccountAutomation({
     const passwordInput = await getFirstVisibleLocator(page, PASSWORD_INPUT_SELECTOR);
     if (passwordInput) {
       reportStep("entering_password", "Entering Google password");
+      await page.waitForTimeout(500 + Math.floor(Math.random() * 800));
+      await page.mouse.move(100 + Math.floor(Math.random() * 400), 200 + Math.floor(Math.random() * 300));
+      await page.waitForTimeout(200 + Math.floor(Math.random() * 400));
       const filled = await fillInputResilient(passwordInput, password);
       if (filled) {
         reportStep("submitting_password", "Submitting password");
+        await page.waitForTimeout(400 + Math.floor(Math.random() * 600));
         await clickFirstVisible(page, NEXT_BUTTON_SELECTORS);
       } else {
         reportStep("password_fill_failed", "Could not fill the Google password field; retrying loop");

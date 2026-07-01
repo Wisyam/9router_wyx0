@@ -98,6 +98,53 @@ export function parseSSEToOpenAIResponse(rawSSE, fallbackModel) {
   return result;
 }
 
+function responsesUsageFromChatUsage(usage = {}) {
+  const inputTokens = usage.prompt_tokens || usage.input_tokens || 0;
+  const outputTokens = usage.completion_tokens || usage.output_tokens || 0;
+  const totalTokens = usage.total_tokens || inputTokens + outputTokens;
+  return { input_tokens: inputTokens, output_tokens: outputTokens, total_tokens: totalTokens };
+}
+
+export function responsesJsonFromOpenAIChatCompletion(chatCompletion, fallbackModel) {
+  const choice = chatCompletion?.choices?.[0] || {};
+  const message = choice.message || {};
+  const created = chatCompletion?.created || Math.floor(Date.now() / 1000);
+  const responseId = chatCompletion?.id ? `resp_${chatCompletion.id}` : `resp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const text = typeof message.content === "string" ? message.content : "";
+  const output = [];
+
+  if (text || !Array.isArray(message.tool_calls) || message.tool_calls.length === 0) {
+    output.push({
+      id: `msg_${responseId}_0`,
+      type: "message",
+      role: "assistant",
+      content: [{ type: "output_text", annotations: [], logprobs: [], text }]
+    });
+  }
+
+  if (Array.isArray(message.tool_calls)) {
+    for (const toolCall of message.tool_calls) {
+      output.push({
+        id: `fc_${toolCall.id || output.length}`,
+        type: "function_call",
+        call_id: toolCall.id || `call_${output.length}`,
+        name: toolCall.function?.name || "",
+        arguments: toolCall.function?.arguments || "{}"
+      });
+    }
+  }
+
+  return {
+    id: responseId,
+    object: "response",
+    created_at: created,
+    status: "completed",
+    model: chatCompletion?.model || fallbackModel,
+    output,
+    usage: responsesUsageFromChatUsage(chatCompletion?.usage)
+  };
+}
+
 /**
  * Handle case: provider forced streaming but client wants JSON.
  * Supports both Codex/Responses API SSE and standard Chat Completions SSE.
@@ -116,8 +163,7 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, pr
   };
 
   // Codex/Responses API SSE path
-  const isCodexResponsesApi = isResponsesProvider(provider) || sourceFormat === FORMATS.OPENAI_RESPONSES;
-  if (isCodexResponsesApi) {
+  if (isResponsesProvider(provider)) {
     try {
       const jsonResponse = await convertResponsesStreamToJson(providerResponse.body);
       if (onRequestSuccess) await onRequestSuccess();
@@ -203,6 +249,7 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, pr
     saveUsageStats({ provider, model, tokens: usage, connectionId, apiKey, endpoint: clientRawRequest?.endpoint });
 
     const totalLatency = Date.now() - requestStartTime;
+    const responsesJson = sourceFormat === FORMATS.OPENAI_RESPONSES ? responsesJsonFromOpenAIChatCompletion(parsed, model) : null;
     saveRequestDetail(buildRequestDetail({
       ...ctx,
       latency: { ttft: totalLatency, total: totalLatency },
@@ -214,6 +261,10 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, pr
       },
       status: "success"
     }, { endpoint: clientRawRequest?.endpoint || null })).catch(() => {});
+
+    if (responsesJson) {
+      return { success: true, response: new Response(JSON.stringify(responsesJson), { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } }) };
+    }
 
     // Strip reasoning_content only when content is non-empty.
     // When content is empty (e.g. thinking models that used all tokens for reasoning),

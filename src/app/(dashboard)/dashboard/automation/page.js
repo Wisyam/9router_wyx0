@@ -10,6 +10,7 @@ import {
   CodeBuddyCnPhoneAutomationModal,
   KiroOAuthWrapper,
   OAuthModal,
+  AutoclawAutomationModal,
 } from "@/shared/components";
 import { FREE_PROVIDERS } from "@/shared/constants/providers";
 
@@ -19,6 +20,7 @@ function getConnectionLabel(count) {
 
 function KiroAutomationPanel({ providerInfo, onRefresh }) {
   const [isOpen, setIsOpen] = useState(false);
+  const [isBulkOpen, setIsBulkOpen] = useState(false);
   const [bulkJob, setBulkJob] = useState(null);
   const [initialFlow, setInitialFlow] = useState(null);
   const openFlow = (flow) => {
@@ -32,7 +34,10 @@ function KiroAutomationPanel({ providerInfo, onRefresh }) {
       title: "Auto Login Bulk",
       icon: "group_add",
       description: "Run bulk gmail|password automation with worker progress and manual assist.",
-      action: () => openFlow({ method: "import", importMode: "bulk-account" }),
+      action: () => {
+        console.log("[Kiro Automation] Opening BulkAccountAutomationModal");
+        setIsBulkOpen(true);
+      },
     },
     {
       id: "bulk-token",
@@ -79,13 +84,19 @@ function KiroAutomationPanel({ providerInfo, onRefresh }) {
             key={option.id}
             type="button"
             onClick={option.action}
-            className="flex min-h-[112px] min-w-0 flex-col gap-2 rounded-lg border border-border bg-surface px-4 py-3 text-left transition-colors hover:border-primary/40 hover:bg-primary/5"
+            className="block min-w-0"
           >
-            <span className="flex items-center gap-2 text-sm font-semibold text-text-main">
-              <span className="material-symbols-outlined text-[20px] text-primary">{option.icon}</span>
-              {option.title}
-            </span>
-            <span className="text-xs leading-relaxed text-text-muted">{option.description}</span>
+            <Card
+              hover
+              padding="sm"
+              className="flex min-h-[112px] flex-col gap-2 cursor-pointer h-full hover:border-brand-500/30 transition-colors"
+            >
+              <span className="flex items-center gap-2 text-sm font-semibold text-text-main">
+                <span className="material-symbols-outlined text-[20px] text-brand-500">{option.icon}</span>
+                {option.title}
+              </span>
+              <span className="text-xs leading-relaxed text-text-muted">{option.description}</span>
+            </Card>
           </button>
         ))}
       </div>
@@ -116,6 +127,14 @@ function KiroAutomationPanel({ providerInfo, onRefresh }) {
         onBulkJobChange={setBulkJob}
         onClose={() => setIsOpen(false)}
       />
+      <BulkAccountAutomationModal
+        isOpen={isBulkOpen}
+        provider="kiro"
+        title="Kiro Bulk GSuite Auto Login"
+        serviceName="Kiro"
+        onSuccess={onRefresh}
+        onClose={() => setIsBulkOpen(false)}
+      />
     </>
   );
 }
@@ -145,8 +164,6 @@ function CodeBuddyBulkTokenModal({ isOpen, onClose, onSuccess }) {
     }
   };
 
-  if (!isOpen) return null;
-
   // Build detailed success message with format breakdown
   let successMsg = null;
   if (result?.success) {
@@ -167,26 +184,25 @@ function CodeBuddyBulkTokenModal({ isOpen, onClose, onSuccess }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
-      <div className="w-full max-w-lg rounded-xl border border-border bg-surface p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
-        <h3 className="mb-4 text-lg font-semibold text-text-main">CodeBuddy OAuth Token Import</h3>
-        <p className="mb-2 text-xs text-text-muted">Paste CodeBuddy OAuth tokens, one per line. Supports three formats:</p>
-        <div className="mb-3 space-y-2 rounded-lg bg-background/50 p-3 text-xs text-text-muted">
+    <Modal isOpen={isOpen} onClose={onClose} title="CodeBuddy OAuth Token Import" size="lg">
+      <div className="flex flex-col gap-4">
+        <p className="text-xs text-text-muted">Paste CodeBuddy OAuth tokens, one per line. Supports three formats:</p>
+        <div className="flex flex-col gap-2 rounded-[10px] bg-background/50 p-3 text-xs text-text-muted">
           <div className="flex items-center gap-2">
-            <span className="material-symbols-outlined text-[16px] text-primary leading-none">check_circle</span>
+            <span className="material-symbols-outlined text-[18px] text-brand-500 leading-none">check_circle</span>
             <span className="flex items-center gap-1.5"><code className="text-[10px] bg-border/50 px-1.5 py-0.5 rounded leading-none">accessToken</code><span>— access token only (24h expiry)</span></span>
           </div>
           <div className="flex items-center gap-2">
-            <span className="material-symbols-outlined text-[16px] text-primary leading-none">check_circle</span>
+            <span className="material-symbols-outlined text-[18px] text-brand-500 leading-none">check_circle</span>
             <span className="flex items-center gap-1.5"><code className="text-[10px] bg-border/50 px-1.5 py-0.5 rounded leading-none">accessToken:refreshToken</code><span>— enables auto-refresh</span></span>
           </div>
           <div className="flex items-center gap-2">
-            <span className="material-symbols-outlined text-[16px] text-primary leading-none">check_circle</span>
+            <span className="material-symbols-outlined text-[18px] text-brand-500 leading-none">check_circle</span>
             <span className="flex items-center gap-1.5"><code className="text-[10px] bg-border/50 px-1.5 py-0.5 rounded leading-none">accessToken:refreshToken:apiKey</code><span>— 365-day access</span></span>
           </div>
         </div>
         <textarea
-          className="mb-3 w-full rounded-lg border border-border bg-background p-3 font-mono text-xs text-text-main placeholder:text-text-muted focus:border-primary focus:outline-none"
+          className="w-full rounded-[10px] border border-border bg-background p-3 font-mono text-xs text-text-main placeholder:text-text-muted focus:border-brand-500/40 focus:ring-2 focus:ring-brand-500/30 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
           rows={8}
           placeholder={
             "eyJhbGciOiJSUzI1NiIs...\n" +
@@ -198,23 +214,26 @@ function CodeBuddyBulkTokenModal({ isOpen, onClose, onSuccess }) {
           disabled={loading}
         />
         {result && (
-          <div className={"mb-3 rounded-lg p-3 text-xs " + (result.success ? "bg-green-500/10 text-green-400" : "bg-red-500/10 text-red-400")}>
+          <div className={`rounded-[10px] p-3 text-xs ${result.success ? "bg-green-500/10 text-green-600 dark:text-green-400" : "bg-red-500/10 text-red-600 dark:text-red-400"}`}>
             {successMsg || result.error || "Import failed"}
           </div>
         )}
-        <div className="flex justify-end gap-2">
-          <button type="button" onClick={onClose} className="rounded-lg px-4 py-2 text-sm text-text-muted hover:bg-border/50">Close</button>
-          <button
-            type="button"
+        <div className="flex gap-2 pt-2">
+          <Button variant="outline" onClick={onClose} fullWidth disabled={loading}>
+            Close
+          </Button>
+          <Button
+            variant="primary"
             onClick={handleImport}
             disabled={loading || !tokens.trim()}
-            className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary/90 disabled:opacity-50"
+            loading={loading}
+            fullWidth
           >
-            {loading ? "Importing..." : "Import Tokens"}
-          </button>
+            Import Tokens
+          </Button>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -226,44 +245,32 @@ function CodeBuddyAutomationPanel({ providerInfo, onRefresh }) {
   return (
     <>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        <button
-          type="button"
-          onClick={() => setIsBulkOpen(true)}
-          className="flex min-h-[112px] min-w-0 flex-col gap-2 rounded-lg border border-border bg-surface px-4 py-3 text-left transition-colors hover:border-primary/40 hover:bg-primary/5"
-        >
-          <span className="flex items-center gap-2 text-sm font-semibold text-text-main">
-            <span className="material-symbols-outlined text-[20px] text-primary">group_add</span>
-            Auto Login + Generate Key
-          </span>
-          <span className="text-xs leading-relaxed text-text-muted">
-            Run bulk GSuite gmail|password login, create a CodeBuddy Access Key, and save it for model calls.
-          </span>
+        <button type="button" onClick={() => setIsBulkOpen(true)} className="text-left">
+          <Card
+            hover
+            padding="md"
+            icon="group_add"
+            title="Auto Login + Generate Key"
+            subtitle="Run bulk GSuite gmail|password login, create a CodeBuddy Access Key, and save it for model calls."
+          />
         </button>
-        <button
-          type="button"
-          onClick={() => setIsBulkTokenOpen(true)}
-          className="flex min-h-[112px] min-w-0 flex-col gap-2 rounded-lg border border-border bg-surface px-4 py-3 text-left transition-colors hover:border-primary/40 hover:bg-primary/5"
-        >
-          <span className="flex items-center gap-2 text-sm font-semibold text-text-main">
-            <span className="material-symbols-outlined text-[20px] text-primary">playlist_add</span>
-            OAuth Token Import
-          </span>
-          <span className="text-xs leading-relaxed text-text-muted">
-            Paste OAuth tokens with optional refresh tokens and API keys for extended access.
-          </span>
+        <button type="button" onClick={() => setIsBulkTokenOpen(true)} className="text-left">
+          <Card
+            hover
+            padding="md"
+            icon="playlist_add"
+            title="OAuth Token Import"
+            subtitle="Paste OAuth tokens with optional refresh tokens and API keys for extended access."
+          />
         </button>
-        <button
-          type="button"
-          onClick={() => setIsOpen(true)}
-          className="flex min-h-[112px] min-w-0 flex-col gap-2 rounded-lg border border-border bg-surface px-4 py-3 text-left transition-colors hover:border-primary/40 hover:bg-primary/5"
-        >
-          <span className="flex items-center gap-2 text-sm font-semibold text-text-main">
-            <span className="material-symbols-outlined text-[20px] text-primary">login</span>
-            Device OAuth Login
-          </span>
-          <span className="text-xs leading-relaxed text-text-muted">
-            Open CodeBuddy browser login and poll until the OAuth token is saved.
-          </span>
+        <button type="button" onClick={() => setIsOpen(true)} className="text-left">
+          <Card
+            hover
+            padding="md"
+            icon="login"
+            title="Device OAuth Login"
+            subtitle="Open CodeBuddy browser login and poll until the OAuth token is saved."
+          />
         </button>
       </div>
       <CodeBuddyBulkTokenModal
@@ -299,18 +306,14 @@ function CodeBuddyCnAutomationPanel({ onRefresh }) {
   return (
     <>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        <button
-          type="button"
-          onClick={() => setIsPhoneOpen(true)}
-          className="flex min-h-[112px] min-w-0 flex-col gap-2 rounded-lg border border-border bg-surface px-4 py-3 text-left transition-colors hover:border-primary/40 hover:bg-primary/5"
-        >
-          <span className="flex items-center gap-2 text-sm font-semibold text-text-main">
-            <span className="material-symbols-outlined text-[20px] text-primary">phone_iphone</span>
-            Phone OTP + Generate Key
-          </span>
-          <span className="text-xs leading-relaxed text-text-muted">
-            Buy 5sim SMS OTP, login to CodeBuddy CN, generate an API key from the authenticated browser session, and save it.
-          </span>
+        <button type="button" onClick={() => setIsPhoneOpen(true)} className="text-left">
+          <Card
+            hover
+            padding="md"
+            icon="phone_iphone"
+            title="Phone OTP + Generate Key"
+            subtitle="Buy 5sim SMS OTP, login to CodeBuddy CN, generate an API key from the authenticated browser session, and save it."
+          />
         </button>
       </div>
       <CodeBuddyCnPhoneAutomationModal
@@ -329,31 +332,23 @@ function QoderAutomationPanel({ providerInfo, onRefresh }) {
   return (
     <>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        <button
-          type="button"
-          onClick={() => setIsBulkOpen(true)}
-          className="flex min-h-[112px] min-w-0 flex-col gap-2 rounded-lg border border-border bg-surface px-4 py-3 text-left transition-colors hover:border-primary/40 hover:bg-primary/5"
-        >
-          <span className="flex items-center gap-2 text-sm font-semibold text-text-main">
-            <span className="material-symbols-outlined text-[20px] text-primary">group_add</span>
-            Auto Login Bulk
-          </span>
-          <span className="text-xs leading-relaxed text-text-muted">
-            Run bulk gmail:password or gmail|password automation via Google SSO with Qoder device flow.
-          </span>
+        <button type="button" onClick={() => setIsBulkOpen(true)} className="text-left">
+          <Card
+            hover
+            padding="md"
+            icon="group_add"
+            title="Auto Login Bulk"
+            subtitle="Run bulk gmail:password or gmail|password automation via Google SSO with Qoder device flow."
+          />
         </button>
-        <button
-          type="button"
-          onClick={() => setIsOAuthOpen(true)}
-          className="flex min-h-[112px] min-w-0 flex-col gap-2 rounded-lg border border-border bg-surface px-4 py-3 text-left transition-colors hover:border-primary/40 hover:bg-primary/5"
-        >
-          <span className="flex items-center gap-2 text-sm font-semibold text-text-main">
-            <span className="material-symbols-outlined text-[20px] text-primary">login</span>
-            Device OAuth Login
-          </span>
-          <span className="text-xs leading-relaxed text-text-muted">
-            Open Qoder device login in browser and poll until the token is saved.
-          </span>
+        <button type="button" onClick={() => setIsOAuthOpen(true)} className="text-left">
+          <Card
+            hover
+            padding="md"
+            icon="login"
+            title="Device OAuth Login"
+            subtitle="Open Qoder device login in browser and poll until the token is saved."
+          />
         </button>
       </div>
       <BulkAccountAutomationModal
@@ -373,6 +368,114 @@ function QoderAutomationPanel({ providerInfo, onRefresh }) {
           setIsOAuthOpen(false);
         }}
         onClose={() => setIsOAuthOpen(false)}
+      />
+    </>
+  );
+}
+
+function AutoclawAutomationPanel({ onRefresh }) {
+  const [isImportOpen, setIsImportOpen] = useState(false);
+  const [isBulkOpen, setIsBulkOpen] = useState(false);
+  const [autoclawConnections, setAutoclawConnections] = useState([]);
+  const [refreshingId, setRefreshingId] = useState(null);
+
+  const refreshAutoclawList = useCallback(async () => {
+    try {
+      const res = await fetch("/api/oauth/autoclaw/connections", { cache: "no-store" });
+      const data = await res.json();
+      if (res.ok) setAutoclawConnections(data.connections || []);
+    } catch {
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshAutoclawList();
+  }, [refreshAutoclawList]);
+
+  const handleSaved = async () => {
+    await refreshAutoclawList();
+    onRefresh?.();
+  };
+
+  const handleRefreshToken = async (connectionId) => {
+    setRefreshingId(connectionId);
+    try {
+      const res = await fetch(`/api/oauth/autoclaw/refresh?connectionId=${connectionId}`, { method: "POST" });
+      if (res.ok) {
+        await refreshAutoclawList();
+      }
+    } catch {
+    } finally {
+      setRefreshingId(null);
+    }
+  };
+
+  return (
+    <>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <button type="button" onClick={() => setIsBulkOpen(true)} className="text-left">
+          <Card
+            hover
+            padding="md"
+            icon="group_add"
+            title="Auto Login Bulk"
+            subtitle="Run bulk gmail|password automation via Google OAuth for AutoClaw."
+          />
+        </button>
+        <button type="button" onClick={() => setIsImportOpen(true)} className="text-left">
+          <Card
+            hover
+            padding="md"
+            icon="token"
+            title="Import Account"
+            subtitle="Paste access_token + refresh_token from autoclaw.z.ai (Google OAuth interception)."
+          />
+        </button>
+      </div>
+
+      <BulkAccountAutomationModal
+        isOpen={isBulkOpen}
+        provider="autoclaw"
+        title="AutoClaw Bulk Auto Login"
+        serviceName="AutoClaw"
+        onSuccess={onRefresh}
+        onClose={() => setIsBulkOpen(false)}
+      />
+
+      {autoclawConnections.length > 0 && (
+        <div className="mt-4 flex flex-col gap-2">
+          <h3 className="text-sm font-semibold text-text-main">Saved Accounts</h3>
+          <div className="flex flex-col gap-1">
+            {autoclawConnections.map((c) => (
+              <div
+                key={c.id}
+                className="flex items-center justify-between gap-3 rounded-lg border border-border bg-surface px-3 py-2"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-medium">{c.name || c.email}</div>
+                  <div className="text-xs text-text-muted">
+                    {c.balance !== null && c.balance !== undefined ? `${c.balance} pts` : "—"}
+                    {c.balanceError ? ` · ${c.balanceError}` : ""}
+                  </div>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  loading={refreshingId === c.id}
+                  onClick={() => handleRefreshToken(c.id)}
+                >
+                  Refresh
+                </Button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <AutoclawAutomationModal
+        isOpen={isImportOpen}
+        onClose={() => setIsImportOpen(false)}
+        onSaved={handleSaved}
       />
     </>
   );
@@ -411,6 +514,14 @@ const AUTOMATION_PROVIDERS = [
     supportedModes: ["bulk-account", "device-oauth"],
     component: QoderAutomationPanel,
   },
+  {
+    id: "autoclaw",
+    label: "AutoClaw",
+    icon: "smart_toy",
+    description: "Import AutoClaw access tokens or run bulk Google OAuth login. Tracks point balance + auto-refreshes tokens.",
+    supportedModes: ["import-token", "bulk-account"],
+    component: AutoclawAutomationPanel,
+  },
 ];
 
 export default function AutomationPage() {
@@ -437,8 +548,13 @@ export default function AutomationPage() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     const requestedProvider = new URLSearchParams(window.location.search).get("provider");
+    console.log("[Automation Page] URL search params:", window.location.search);
+    console.log("[Automation Page] Requested provider:", requestedProvider);
     if (AUTOMATION_PROVIDERS.some((provider) => provider.id === requestedProvider)) {
+      console.log("[Automation Page] Setting active provider to:", requestedProvider);
       setActiveProviderId(requestedProvider);
+    } else {
+      console.log("[Automation Page] Provider not found, using default:", AUTOMATION_PROVIDERS[0].id);
     }
   }, []);
 
@@ -482,7 +598,7 @@ export default function AutomationPage() {
                   : "border-border bg-surface text-text-main hover:border-primary/30 hover:bg-primary/5"
               }`}
             >
-              <span className="material-symbols-outlined text-[22px]">{provider.icon}</span>
+              <span className="material-symbols-outlined text-[20px]">{provider.icon}</span>
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm font-semibold">{provider.label}</span>
                 <span className="mt-0.5 block text-xs text-text-muted">
@@ -499,7 +615,7 @@ export default function AutomationPage() {
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <span className="material-symbols-outlined text-[22px] text-primary">{activeProvider.icon}</span>
+                <span className="material-symbols-outlined text-[20px] text-primary">{activeProvider.icon}</span>
                 <h2 className="text-lg font-semibold">{activeProvider.label}</h2>
               </div>
               <div className="mt-2 flex flex-wrap gap-1.5">

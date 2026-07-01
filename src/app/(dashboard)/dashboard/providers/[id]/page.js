@@ -81,8 +81,10 @@ export default function ProviderDetailPage() {
   };
 
   const triggerOAuthConnection = () => {
-    if (providerId === "kiro" || providerId === "codebuddy" || providerId === "codebuddy-cn") {
-      router.push(`/dashboard/automation?provider=${providerId}`);
+    if (providerId === "kiro" || providerId === "codebuddy" || providerId === "codebuddy-cn" || providerId === "autoclaw") {
+      const url = `/dashboard/automation?provider=${providerId}`;
+      console.log("[Provider Page] Navigating to:", url, "providerId:", providerId);
+      router.push(url);
       return;
     }
     if (providerId === "antigravity" && typeof window !== "undefined") {
@@ -147,7 +149,7 @@ export default function ProviderDetailPage() {
   const isAnthropicCompatible = isAnthropicCompatibleProvider(providerId);
   const isCompatible = isOpenAICompatible || isAnthropicCompatible;
   const hasDualAuthModes = !isCompatible && isOAuth && supportsApiKeyAuth;
-  const usesAutomationLogin = providerId === "kiro" || providerId === "codebuddy" || providerId === "codebuddy-cn";
+  const usesAutomationLogin = providerId === "kiro" || providerId === "codebuddy" || providerId === "codebuddy-cn" || providerId === "autoclaw";
   const oauthConnectionLabel = providerId === "xai" ? "Grok Build OAuth" : "OAuth";
   const apiKeyConnectionLabel = providerId === "xai" ? "xAI API Key" : "API Key";
   const thinkingConfig = AI_PROVIDERS[providerId]?.thinkingConfig || THINKING_CONFIG.extended;

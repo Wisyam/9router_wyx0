@@ -1,6 +1,6 @@
 import { randomInt } from "crypto";
 
-const CODEBUDDY_CN_HOME_URL = "https://www.codebuddy.cn/home/";
+const CODEBUDDY_CN_LOGIN_URL = "https://www.codebuddy.cn/login/?platform=admin&state=0";
 const CODEBUDDY_CN_KEYS_URL = "https://www.codebuddy.cn/profile/keys";
 const CODEBUDDY_CN_API_KEY_ENDPOINT = "/console/api/client/v1/api-keys";
 const CODEBUDDY_CN_API_KEY_ENDPOINT_URL = "https://www.codebuddy.cn/console/api/client/v1/api-keys";
@@ -82,13 +82,22 @@ const OTP_INPUT_SELECTORS = [
   "input[maxlength='6']",
 ];
 const LOGIN_FRAME_READY_SELECTORS = [
-  "text=其他登录方式",
-  "text=微信登录",
-  "text=手机号",
-  "text=服务条款",
-  "text=Phone",
-  "text=SMS",
-  "input[type='checkbox']",
+  "#kc-form-login",
+  "#phoneNumber",
+  "input.kc-phone-number-input",
+  "input.code-btn",
+  "text=+86",
+  "text=copilot",
+  "#kc-login",
+  ".kc-country-selector",
+];
+const PHONE_AUTH_SCOPE_SELECTORS = [
+  "#kc-form-login",
+  "#phoneNumber",
+  "input.kc-phone-number-input",
+  ".kc-country-selector",
+  "input.code-btn",
+  "#kc-login",
 ];
 
 function delay(ms) {
@@ -111,12 +120,17 @@ function normalizePhoneForInput(phone) {
 
 function splitPhoneForLogin(phone) {
   const normalized = normalizePhoneForInput(phone);
-  for (const dialCode of ["+852", "+86"]) {
-    if (normalized.startsWith(dialCode)) {
-      return {
-        dialCode,
-        localNumber: normalized.slice(dialCode.length),
-      };
+  // 5sim returns phone numbers without the leading + (e.g. "85251234567").
+  // Match dial codes with or without the + prefix so the country code is
+  // separated correctly and only the local number is typed into the input.
+  for (const rawDial of ["+852", "+86"]) {
+    const withPlus = rawDial;
+    const withoutPlus = rawDial.slice(1);
+    if (normalized.startsWith(withPlus)) {
+      return { dialCode: withPlus, localNumber: normalized.slice(withPlus.length) };
+    }
+    if (normalized.startsWith(withoutPlus)) {
+      return { dialCode: withPlus, localNumber: normalized.slice(withoutPlus.length) };
     }
   }
   return { dialCode: null, localNumber: normalized.replace(/^\+/, "") };
@@ -214,15 +228,7 @@ async function waitForAnyVisible(scope, selectors, timeoutMs) {
 }
 
 async function findPhoneAuthScope(loginFrame) {
-  const scopes = [
-    loginFrame.frameLocator?.("iframe[src*='/auth/realms/copilot/']"),
-    loginFrame.frameLocator?.("iframe[src*='auth']"),
-    loginFrame,
-  ].filter(Boolean);
-
-  for (const scope of scopes) {
-    if (await hasVisibleInput(scope, PHONE_INPUT_SELECTORS)) return scope;
-  }
+  if (await hasAnyVisible(loginFrame, PHONE_AUTH_SCOPE_SELECTORS)) return loginFrame;
   return null;
 }
 
@@ -242,6 +248,56 @@ async function acceptLoginTerms(loginFrame) {
     "input[type='checkbox']",
     "label.t-checkbox",
   ]);
+}
+
+async function resolveLoginScope(page, { timeoutMs = 40_000 } = {}) {
+  const startedAt = Date.now();
+  do {
+    if (await hasAnyVisible(page, LOGIN_FRAME_READY_SELECTORS)) return page;
+    const frame = page.frameLocator?.("#phone-iframe");
+    if (frame && await hasAnyVisible(frame, LOGIN_FRAME_READY_SELECTORS)) return frame;
+    await delay(250);
+  } while (Date.now() - startedAt < timeoutMs);
+  return null;
+}
+
+async function syncHiddenPhoneNumber(scope, dialCode, localNumber) {
+  if (!dialCode || !localNumber) return true;
+  const expected = `${dialCode}${localNumber}`;
+  const hidden = scope.locator?.("input[name='phoneNumber']")?.first?.();
+  if (!hidden) return true;
+  const hiddenCount = await hidden.count?.().catch(() => 0);
+  if (hiddenCount === 0) return true;
+  if (!hidden.inputValue || !hidden.evaluate) return true;
+  const current = await hidden.inputValue?.({ timeout: 1_000 }).catch(() => "");
+  if (current === expected) return true;
+  await hidden.evaluate?.((input, value) => {
+    input.value = value;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  }, expected).catch(() => null);
+  const updated = await hidden.inputValue?.({ timeout: 1_000 }).catch(() => "");
+  return updated === expected;
+}
+
+async function clickEnabledSubmit(scope) {
+  for (const selector of ["#kc-login", ...OTP_SUBMIT_SELECTORS]) {
+    const locator = scope.locator?.(selector)?.first?.();
+    if (!locator) continue;
+    const visible = await locator.isVisible?.({ timeout: 1_000 }).catch(() => false);
+    if (!visible) continue;
+    const enabled = locator.isEnabled
+      ? await locator.isEnabled({ timeout: 10_000 }).catch(() => false)
+      : true;
+    if (!enabled) continue;
+    try {
+      await locator.click({ timeout: 3_000 });
+      return true;
+    } catch {
+      continue;
+    }
+  }
+  return false;
 }
 
 async function waitForCodeBuddyCnSession(page) {
@@ -271,22 +327,13 @@ function manualError(message, step) {
 
 export async function runCodeBuddyCnPhoneLogin({ page, phone, codeProvider, onStep }) {
   onStep?.("opening_codebuddy_cn", "Opening CodeBuddy CN phone login");
-  await page.goto(CODEBUDDY_CN_HOME_URL, { waitUntil: "domcontentloaded", timeout: 45_000 });
-  await page.waitForTimeout?.(2_000);
+  await page.goto(CODEBUDDY_CN_LOGIN_URL, { waitUntil: "domcontentloaded", timeout: 45_000 });
+  // Wait for the main page to finish loading so the #phone-iframe can start rendering.
+  // The iframe loads a Keycloak auth page which can be slow through SOCKS proxies.
+  await page.waitForLoadState?.("networkidle", { timeout: 15_000 }).catch(() => null);
 
-  const loginOpened = await clickFirst(page, [
-    "button.btn-login",
-    ".nav-actions .btn-login",
-    "button:has-text('登录')",
-    "button:has-text('Masuk')",
-    "button:has-text('Login')",
-  ]);
-  if (!loginOpened) throw manualError("CodeBuddy CN login button not found", "login_button_not_found");
-
-  const loginFrame = page.frameLocator?.("iframe.dialogModel-iframe");
-  if (!loginFrame) throw manualError("CodeBuddy CN login frame not found", "login_frame_not_found");
-  const loginFrameReady = await waitForAnyVisible(loginFrame, LOGIN_FRAME_READY_SELECTORS, 20_000);
-  if (!loginFrameReady) throw manualError("CodeBuddy CN login frame did not render", "login_frame_not_rendered");
+  const loginFrame = await resolveLoginScope(page, { timeoutMs: 40_000 });
+  if (!loginFrame) throw manualError("CodeBuddy CN login form did not render", "login_form_not_rendered");
 
   await acceptLoginTerms(loginFrame);
 
@@ -299,8 +346,7 @@ export async function runCodeBuddyCnPhoneLogin({ page, phone, codeProvider, onSt
     authFrame = await resolvePhoneAuthScope(loginFrame, { timeoutMs: 15_000 });
   }
 
-  const termsAccepted = await acceptLoginTerms(loginFrame);
-  if (!termsAccepted) throw manualError("CodeBuddy CN login terms checkbox not found", "login_terms_not_found");
+  await acceptLoginTerms(loginFrame);
 
   if (!authFrame) {
     throw manualError("CodeBuddy CN phone authentication form did not load", "phone_auth_form_not_loaded");
@@ -316,6 +362,7 @@ export async function runCodeBuddyCnPhoneLogin({ page, phone, codeProvider, onSt
     if (countrySelectorOpened) {
       const countrySelected = await clickFirst(authFrame, [
         `.kc-country-option:has-text('${phoneParts.dialCode}')`,
+        ".kc-country-dropdown > .kc-country-option:nth-of-type(2)",
         `[role='option']:has-text('${phoneParts.dialCode}')`,
         `text=${phoneParts.dialCode}`,
       ]);
@@ -330,9 +377,11 @@ export async function runCodeBuddyCnPhoneLogin({ page, phone, codeProvider, onSt
   onStep?.("entering_phone", "Entering 5sim phone number");
   const phoneFilled = await fillFirst(authFrame, PHONE_INPUT_SELECTORS, phoneInputValue);
   if (!phoneFilled) throw manualError("CodeBuddy CN phone input not found", "phone_input_not_found");
+  const hiddenPhoneSynced = await syncHiddenPhoneNumber(authFrame, phoneParts.dialCode, phoneInputValue);
+  if (!hiddenPhoneSynced) throw manualError("CodeBuddy CN hidden phone value did not update", "hidden_phone_not_synced");
 
   onStep?.("requesting_otp", "Requesting CodeBuddy CN SMS code");
-  const requested = await clickFirst(authFrame, ["input[type='button']", ...PHONE_SUBMIT_SELECTORS]);
+  const requested = await clickFirst(authFrame, ["input.code-btn", "input[type='button']", ...PHONE_SUBMIT_SELECTORS]);
   if (!requested) throw manualError("CodeBuddy CN send-code button not found", "otp_button_not_found");
 
   onStep?.("waiting_5sim_otp", "Waiting for 5sim OTP");
@@ -343,7 +392,8 @@ export async function runCodeBuddyCnPhoneLogin({ page, phone, codeProvider, onSt
   const otpFilled = await fillFirst(authFrame, OTP_INPUT_SELECTORS, code);
   if (!otpFilled) throw manualError("CodeBuddy CN OTP input not found", "otp_input_not_found");
 
-  await clickFirst(authFrame, ["#kc-login", ...OTP_SUBMIT_SELECTORS]);
+  const submitted = await clickEnabledSubmit(authFrame);
+  if (!submitted) throw manualError("CodeBuddy CN login button was not enabled after OTP", "login_button_not_enabled");
   const hasSession = await waitForCodeBuddyCnSession(page);
   if (!hasSession) {
     throw manualError("CodeBuddy CN login session was not confirmed after OTP", "login_session_not_confirmed");

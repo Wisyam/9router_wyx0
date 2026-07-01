@@ -3,13 +3,14 @@ import { ProxyAgent } from "undici";
 const FIVE_SIM_API_BASE = "https://5sim.net/v1";
 const DEFAULT_TIMEOUT_MS = 20_000;
 const DEFAULT_POLL_INTERVAL_MS = 5_000;
+const DEFAULT_INITIAL_OTP_POLL_DELAY_MS = 5_000;
 const DEFAULT_OTP_TIMEOUT_MS = 120_000;
 const PRICE_CACHE_TTL_MS = 30_000;
 const PRICE_CACHE_STALE_TTL_MS = 5 * 60_000;
 const GUEST_RETRY_DELAYS_MS = [250, 750];
 const PROFILE_RETRY_DELAYS_MS = [250, 750, 1500];
-const DEFAULT_CHECK_RETRY_COUNT = 5;
-const CHECK_RETRY_DELAY_MS = 1_000;
+const MIN_CHECK_POLL_INTERVAL_MS = 5_000;
+const FIVE_SIM_COOLDOWN_MS = 10 * 60_000;
 const FETCH_PROXY_PROTOCOLS = new Set(["http:", "https:", "socks4:", "socks5:"]);
 const priceCacheByFetch = new WeakMap();
 
@@ -66,21 +67,30 @@ function buildNoStockMessage(country, product, operator) {
   return `No available 5sim phone numbers for ${product} in ${country} using ${scope}`;
 }
 
-function assertBalanceCoversOffer(profile, offer, country, product) {
-  const balance = Number(profile?.balance ?? 0);
-  if (!Number.isFinite(offer.cost) || balance >= offer.cost) return;
-  throw new Error(`5sim balance ${balance} is lower than ${offer.cost} required for ${product} in ${country} (${offer.operator})`);
+function createFiveSimCooldownError(path, message) {
+  const error = new Error(message || "5sim temporarily banned this IP/API key; wait 10 minutes before retrying.");
+  error.status = 444;
+  error.path = path;
+  error.code = "FIVE_SIM_COOLDOWN";
+  error.cooldownMs = FIVE_SIM_COOLDOWN_MS;
+  return error;
 }
 
-function assertPositiveBalance(profile) {
-  const balance = Number(profile?.balance ?? 0);
-  if (Number.isFinite(balance) && balance > 0) return;
-  throw new Error(`5sim balance ${balance} is not enough to buy a phone number`);
+function isFiveSimCooldownError(error) {
+  return error?.code === "FIVE_SIM_COOLDOWN" || Number(error?.status || 0) === 444;
 }
 
 function isTransientRequestError(error) {
   const status = Number(error?.status || 0);
-  return !status || status === 408 || status === 425 || status === 429 || status === 444 || status >= 500;
+  return !status || status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
+function getCheckBackoffDelay(error, currentDelay) {
+  const status = Number(error?.status || 0);
+  if (status === 429) return Math.min(Math.max(currentDelay * 2, 10_000), 60_000);
+  if (status === 503) return Math.min(Math.max(currentDelay * 2, 10_000), 30_000);
+  if (status === 504) return Math.min(Math.max(Math.ceil(currentDelay * 1.5), 8_000), 20_000);
+  return Math.min(Math.max(Math.ceil(currentDelay * 1.5), MIN_CHECK_POLL_INTERVAL_MS), 30_000);
 }
 
 function getPriceCache(fetchImpl) {
@@ -111,12 +121,6 @@ function createFetchDispatcher(proxyUrl) {
   } catch {
     return null;
   }
-}
-
-function isRetryableBuyError(error) {
-  const status = Number(error?.status || 0);
-  return (status >= 500 && status < 600)
-    || /bad gateway|no free phones|not enough phones|not available/i.test(error?.message || "");
 }
 
 export class FiveSimClient {
@@ -151,6 +155,9 @@ export class FiveSimClient {
       }
       if (!response.ok) {
         const msg = payload?.message || payload?.error || text || `5sim HTTP ${response.status}`;
+        if (response.status === 444) {
+          throw createFiveSimCooldownError(path, "5sim temporarily banned this IP/API key; wait 10 minutes before retrying.");
+        }
         const error = new Error(`5sim HTTP ${response.status} for ${path}: ${msg}`);
         error.status = response.status;
         error.path = path;
@@ -247,48 +254,21 @@ export class FiveSimClient {
     const cleanCountry = encodeURIComponent(normalizedCountry);
     const cleanProduct = encodeURIComponent(normalizedProduct);
     const requestedOperator = String(operator || "any").trim().toLowerCase();
-    let discoveryError = null;
-    let candidates;
-    try {
-      const prices = await this.getPrices({ country: normalizedCountry, product: normalizedProduct });
-      const offers = listAvailableOffers(prices, normalizedCountry, normalizedProduct);
-      candidates = requestedOperator && requestedOperator !== "any"
-        ? offers.filter((offer) => offer.operator === requestedOperator)
-        : offers;
-    } catch (error) {
-      if (!isTransientRequestError(error)) throw error;
-      discoveryError = error;
-      candidates = [{
-        operator: requestedOperator || "any",
-        cost: Number.POSITIVE_INFINITY,
-        count: 0,
-      }];
-    }
-    if (!candidates.length) {
-      throw new Error(buildNoStockMessage(normalizedCountry, normalizedProduct, requestedOperator || "any"));
-    }
-
-    const profile = await this.getProfile();
-    if (discoveryError) assertPositiveBalance(profile);
-    else assertBalanceCoversOffer(profile, candidates[0], normalizedCountry, normalizedProduct);
-
+    const cleanOperator = encodeURIComponent(requestedOperator || "any");
+    const path = `/user/buy/activation/${cleanCountry}/${cleanOperator}/${cleanProduct}`;
+    const BUY_RETRY_DELAYS_MS = [500, 1500, 3000, 5000, 8000];
     let lastError = null;
-    for (const offer of candidates.slice(0, 5)) {
+    for (let attempt = 0; attempt <= BUY_RETRY_DELAYS_MS.length; attempt += 1) {
       try {
-        const cleanOperator = encodeURIComponent(offer.operator);
-        return await this.request(`/user/buy/activation/${cleanCountry}/${cleanOperator}/${cleanProduct}`);
+        return await this.request(path);
       } catch (error) {
         lastError = error;
-        if (!isRetryableBuyError(error)) throw error;
+        if (isFiveSimCooldownError(error)) throw error;
+        if (!isTransientRequestError(error) || attempt === BUY_RETRY_DELAYS_MS.length) break;
+        await this.wait(BUY_RETRY_DELAYS_MS[attempt]);
       }
     }
-    if (discoveryError && lastError) {
-      const error = new Error(`${discoveryError.message}; authenticated buy fallback also failed: ${lastError.message}`);
-      error.status = lastError.status;
-      error.path = lastError.path;
-      throw error;
-    }
-    throw lastError || new Error(buildNoStockMessage(normalizedCountry, normalizedProduct, requestedOperator || "any"));
+    throw lastError;
   }
 
   async getActivationQuote({ country = "hongkong", operator = "any", product = "codebuddy" } = {}) {
@@ -343,28 +323,31 @@ export class FiveSimClient {
   async waitForCode(orderId, {
     timeoutMs = DEFAULT_OTP_TIMEOUT_MS,
     pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
-    checkRetryCount = DEFAULT_CHECK_RETRY_COUNT,
+    initialDelayMs = DEFAULT_INITIAL_OTP_POLL_DELAY_MS,
   } = {}) {
     const startedAt = Date.now();
+    const deadline = startedAt + timeoutMs;
+    const minPollInterval = Math.max(MIN_CHECK_POLL_INTERVAL_MS, Number.parseInt(pollIntervalMs, 10) || DEFAULT_POLL_INTERVAL_MS);
+    let nextDelayMs = minPollInterval;
     let lastOrder = null;
     let lastError = null;
-    while (Date.now() - startedAt < timeoutMs) {
-      const attempts = Math.max(1, Number.parseInt(checkRetryCount, 10) || DEFAULT_CHECK_RETRY_COUNT);
-      for (let attempt = 1; attempt <= attempts; attempt += 1) {
-        try {
-          lastOrder = await this.checkOrder(orderId);
-          lastError = null;
-          if (lastOrder.code) return lastOrder;
-          break;
-        } catch (error) {
-          if (!isTransientRequestError(error)) throw error;
-          lastError = error;
-          if (attempt < attempts && Date.now() - startedAt < timeoutMs) {
-            await this.wait(CHECK_RETRY_DELAY_MS);
-          }
-        }
+    const firstDelay = Math.min(Math.max(0, Number.parseInt(initialDelayMs, 10) || 0), Math.max(0, deadline - Date.now()));
+    if (firstDelay > 0) await this.wait(firstDelay);
+    while (Date.now() < deadline) {
+      try {
+        lastOrder = await this.checkOrder(orderId);
+        lastError = null;
+        nextDelayMs = minPollInterval;
+        if (lastOrder.code) return lastOrder;
+      } catch (error) {
+        if (isFiveSimCooldownError(error)) throw error;
+        if (!isTransientRequestError(error)) throw error;
+        lastError = error;
+        nextDelayMs = getCheckBackoffDelay(error, nextDelayMs);
       }
-      await this.wait(pollIntervalMs);
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      await this.wait(Math.min(nextDelayMs, remaining));
     }
     const suffix = lastError?.message ? `; last 5sim error: ${lastError.message}` : "";
     const error = new Error(`Timed out waiting for 5sim OTP code${suffix}`);

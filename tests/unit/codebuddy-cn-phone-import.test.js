@@ -11,36 +11,12 @@ import {
 import { __test__ as kiroBulkImportTest } from "../../src/lib/oauth/services/kiroBulkImportManager.js";
 
 describe("FiveSimClient", () => {
-  it("buys a CodeBuddy Hong Kong activation number with bearer auth", async () => {
+  it("buys a CodeBuddy Hong Kong activation number directly with bearer auth", async () => {
     const calls = [];
     const client = new FiveSimClient({
       token: "five-token",
       fetchImpl: async (url, init) => {
         calls.push({ url, init });
-        if (url.includes("/guest/prices")) {
-          return {
-            ok: true,
-            status: 200,
-            async text() {
-              return JSON.stringify({
-                hongkong: {
-                  codebuddy: {
-                    virtual54: { cost: 0.13, count: 1 },
-                  },
-                },
-              });
-            },
-          };
-        }
-        if (url.includes("/user/profile")) {
-          return {
-            ok: true,
-            status: 200,
-            async text() {
-              return JSON.stringify({ balance: 100 });
-            },
-          };
-        }
         return {
           ok: true,
           status: 200,
@@ -58,12 +34,46 @@ describe("FiveSimClient", () => {
     });
 
     expect(order.id).toBe(42);
-    expect(calls[2].url).toBe("https://5sim.net/v1/user/buy/activation/hongkong/virtual54/codebuddy");
-    expect(calls[2].init.headers.Authorization).toBe("Bearer five-token");
-    expect(calls[2].init.headers.Accept).toBe("application/json");
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe("https://5sim.net/v1/user/buy/activation/hongkong/any/codebuddy");
+    expect(calls[0].init.headers.Authorization).toBe("Bearer five-token");
+    expect(calls[0].init.headers.Accept).toBe("application/json");
   });
 
-  it("sends 5sim API requests through the configured HTTP proxy", async () => {
+  it("retries transient 5sim buy activation gateway errors before succeeding", async () => {
+    const calls = [];
+    const waits = [];
+    const client = new FiveSimClient({
+      token: "five-token",
+      waitImpl: vi.fn(async (ms) => { waits.push(ms); }),
+      fetchImpl: async (url) => {
+        calls.push(url);
+        if (calls.length <= 5) {
+          return {
+            ok: false,
+            status: 444,
+            async text() { return "502 Bad Gateway"; },
+          };
+        }
+        return {
+          ok: true,
+          status: 200,
+          async text() {
+            return JSON.stringify({ id: 99, phone: "85251234567", product: "codebuddy" });
+          },
+        };
+      },
+    });
+
+    const order = await client.buyActivation({ country: "hongkong", operator: "any", product: "codebuddy" });
+
+    expect(order.id).toBe(99);
+    expect(order.phone).toBe("85251234567");
+    expect(calls).toHaveLength(6);
+    expect(waits).toEqual([500, 1500, 3000, 5000, 8000]);
+  });
+
+    it("sends 5sim API requests through the configured HTTP proxy", async () => {
     const calls = [];
     const client = new FiveSimClient({
       token: "five-token",
@@ -198,275 +208,11 @@ describe("FiveSimClient", () => {
     expect(quote.selectedOffer.operator).toBe("virtual54");
   });
 
-  it("resolves any operator from 5sim prices before buying CodeBuddy numbers", async () => {
-    const calls = [];
-    const client = new FiveSimClient({
-      token: "five-token",
-      fetchImpl: async (url, init) => {
-        calls.push({ url, init });
-        if (url.includes("/guest/prices")) {
-          return {
-            ok: true,
-            status: 200,
-            async text() {
-              return JSON.stringify({
-                hongkong: {
-                  codebuddy: {
-                    virtual54: { cost: 0.13, count: 153319 },
-                  },
-                },
-              });
-            },
-          };
-        }
-        if (url.includes("/user/profile")) {
-          return {
-            ok: true,
-            status: 200,
-            async text() {
-              return JSON.stringify({ balance: 100 });
-            },
-          };
-        }
-        return {
-          ok: true,
-          status: 200,
-          async text() {
-            return JSON.stringify({ id: 42, phone: "+85251234567", product: "codebuddy", operator: "virtual54" });
-          },
-        };
-      },
-    });
 
-    const order = await client.buyActivation({
-      country: "hongkong",
-      operator: "any",
-      product: "codebuddy",
-    });
 
-    expect(calls[0].url).toBe("https://5sim.net/v1/guest/prices?country=hongkong&product=codebuddy");
-    expect(calls[0].init.headers.Authorization).toBeUndefined();
-    expect(calls[1].url).toBe("https://5sim.net/v1/user/profile");
-    expect(calls[1].init.headers.Authorization).toBe("Bearer five-token");
-    expect(calls[2].url).toBe("https://5sim.net/v1/user/buy/activation/hongkong/virtual54/codebuddy");
-    expect(calls[2].init.headers.Authorization).toBe("Bearer five-token");
-    expect(order.operator).toBe("virtual54");
-  });
 
-  it("tries the next available 5sim operator when the first buy hits a gateway error", async () => {
-    const calls = [];
-    const client = new FiveSimClient({
-      token: "five-token",
-      fetchImpl: async (url, init) => {
-        calls.push({ url, init });
-        if (url.includes("/guest/prices")) {
-          return {
-            ok: true,
-            status: 200,
-            async text() {
-              return JSON.stringify({
-                hongkong: {
-                  codebuddy: {
-                    firstop: { cost: 0.1, count: 10 },
-                    secondop: { cost: 0.2, count: 20 },
-                  },
-                },
-              });
-            },
-          };
-        }
-        if (url.includes("/user/profile")) {
-          return {
-            ok: true,
-            status: 200,
-            async text() {
-              return JSON.stringify({ balance: 100 });
-            },
-          };
-        }
-        if (url.includes("/firstop/")) {
-          return {
-            ok: false,
-            status: 502,
-            async text() {
-              return "Bad Gateway";
-            },
-          };
-        }
-        return {
-          ok: true,
-          status: 200,
-          async text() {
-            return JSON.stringify({ id: 43, phone: "+85257654321", product: "codebuddy", operator: "secondop" });
-          },
-        };
-      },
-    });
 
-    const order = await client.buyActivation({
-      country: "hongkong",
-      operator: "any",
-      product: "codebuddy",
-    });
 
-    expect(calls.map((call) => call.url)).toContain("https://5sim.net/v1/user/buy/activation/hongkong/firstop/codebuddy");
-    expect(calls.map((call) => call.url)).toContain("https://5sim.net/v1/user/buy/activation/hongkong/secondop/codebuddy");
-    expect(order.operator).toBe("secondop");
-  });
-
-  it("retries transient guest price failures before selecting an available operator", async () => {
-    const calls = [];
-    let priceAttempts = 0;
-    const client = new FiveSimClient({
-      token: "five-token",
-      waitImpl: async () => {},
-      fetchImpl: async (url, init) => {
-        calls.push({ url, init });
-        if (url.includes("/guest/prices")) {
-          priceAttempts += 1;
-          if (priceAttempts < 3) {
-            return {
-              ok: false,
-              status: 444,
-              async text() {
-                return "502 Bad Gateway";
-              },
-            };
-          }
-          return {
-            ok: true,
-            status: 200,
-            async text() {
-              return JSON.stringify({ hongkong: { codebuddy: { virtual54: { cost: 0.13, count: 10 } } } });
-            },
-          };
-        }
-        if (url.includes("/user/profile")) {
-          return {
-            ok: true,
-            status: 200,
-            async text() {
-              return JSON.stringify({ balance: 100 });
-            },
-          };
-        }
-        return {
-          ok: true,
-          status: 200,
-          async text() {
-            return JSON.stringify({ id: 44, phone: "+85250000000", operator: "virtual54" });
-          },
-        };
-      },
-    });
-
-    const order = await client.buyActivation({ country: "hongkong", operator: "any", product: "codebuddy" });
-
-    expect(priceAttempts).toBe(3);
-    expect(calls.at(-1).url).toContain("/hongkong/virtual54/codebuddy");
-    expect(order.id).toBe(44);
-  });
-
-  it("falls back to one authenticated buy when guest price discovery stays unavailable", async () => {
-    const calls = [];
-    const client = new FiveSimClient({
-      token: "five-token",
-      waitImpl: async () => {},
-      fetchImpl: async (url, init) => {
-        calls.push({ url, init });
-        if (url.includes("/guest/prices")) {
-          return {
-            ok: false,
-            status: 444,
-            async text() {
-              return "502 Bad Gateway";
-            },
-          };
-        }
-        if (url.includes("/user/profile")) {
-          return {
-            ok: true,
-            status: 200,
-            async text() {
-              return JSON.stringify({ balance: 100 });
-            },
-          };
-        }
-        return {
-          ok: true,
-          status: 200,
-          async text() {
-            return JSON.stringify({ id: 45, phone: "+85251111111", operator: "virtual54" });
-          },
-        };
-      },
-    });
-
-    const order = await client.buyActivation({ country: "hongkong", operator: "any", product: "codebuddy" });
-
-    expect(calls.filter((call) => call.url.includes("/guest/prices"))).toHaveLength(3);
-    expect(calls.at(-1).url).toContain("/user/buy/activation/hongkong/any/codebuddy");
-    expect(order.id).toBe(45);
-  });
-
-  it("stops before buying when 5sim has no available CodeBuddy stock", async () => {
-    const calls = [];
-    const client = new FiveSimClient({
-      token: "five-token",
-      fetchImpl: async (url, init) => {
-        calls.push({ url, init });
-        return {
-          ok: true,
-          status: 200,
-          async text() {
-            return JSON.stringify({ hongkong: { codebuddy: { virtual54: { cost: 0.13, count: 0 } } } });
-          },
-        };
-      },
-    });
-
-    await expect(client.buyActivation({
-      country: "hongkong",
-      operator: "any",
-      product: "codebuddy",
-    })).rejects.toThrow("No available 5sim phone numbers for codebuddy in hongkong using any operator");
-
-    expect(calls).toHaveLength(1);
-  });
-
-  it("stops before buying when 5sim balance is too low", async () => {
-    const calls = [];
-    const client = new FiveSimClient({
-      token: "five-token",
-      fetchImpl: async (url, init) => {
-        calls.push({ url, init });
-        if (url.includes("/guest/prices")) {
-          return {
-            ok: true,
-            status: 200,
-            async text() {
-              return JSON.stringify({ hongkong: { codebuddy: { virtual54: { cost: 0.13, count: 10 } } } });
-            },
-          };
-        }
-        return {
-          ok: true,
-          status: 200,
-          async text() {
-            return JSON.stringify({ balance: 0.01 });
-          },
-        };
-      },
-    });
-
-    await expect(client.buyActivation({
-      country: "hongkong",
-      operator: "any",
-      product: "codebuddy",
-    })).rejects.toThrow("5sim balance 0.01 is lower than 0.13 required for codebuddy in hongkong (virtual54)");
-
-    expect(calls).toHaveLength(2);
-  });
 
   it("extracts OTP code from activation order checks", async () => {
     const client = new FiveSimClient({
@@ -525,12 +271,12 @@ describe("FiveSimClient", () => {
 });
 
 describe("CodeBuddy CN phone import", () => {
-  it("enters the current nested CodeBuddy CN phone login flow", async () => {
+  it("enters the direct CodeBuddy CN phone login flow without iframe", async () => {
     const actions = [];
     const visibleSelectors = {
-      page: new Set(["button.btn-login"]),
-      outer: new Set(["text=手机号", "input[type='checkbox']"]),
-      auth: new Set([
+      page: new Set([
+        "text=手机号",
+        "input[type='checkbox']",
         ".kc-country-selector",
         ".kc-country-option:has-text('+852')",
         "#phoneNumber",
@@ -551,23 +297,11 @@ describe("CodeBuddy CN phone import", () => {
         };
       },
     });
-    const authScope = makeScope("auth");
-    const outerScope = {
-      ...makeScope("outer"),
-      frameLocator(selector) {
-        actions.push({ type: "frame", scope: "outer", selector });
-        return authScope;
-      },
-    };
     const page = {
       ...makeScope("page"),
       async goto(url) { actions.push({ type: "goto", url }); },
       async waitForTimeout() {},
       async waitForFunction() { return true; },
-      frameLocator(selector) {
-        actions.push({ type: "frame", scope: "page", selector });
-        return outerScope;
-      },
     };
 
     const result = await runCodeBuddyCnPhoneLogin({
@@ -577,16 +311,17 @@ describe("CodeBuddy CN phone import", () => {
     });
 
     expect(result.phone).toBe("+85251234567");
-    expect(actions).toContainEqual({ type: "click", scope: "page", selector: "button.btn-login" });
-    expect(actions).toContainEqual({ type: "frame", scope: "page", selector: "iframe.dialogModel-iframe" });
-    expect(actions).toContainEqual({ type: "check", scope: "outer", selector: "input[type='checkbox']" });
-    expect(actions).toContainEqual({ type: "frame", scope: "outer", selector: "iframe[src*='/auth/realms/copilot/']" });
-    expect(actions).toContainEqual({ type: "click", scope: "auth", selector: ".kc-country-option:has-text('+852')" });
-    expect(actions).toContainEqual({ type: "fill", scope: "auth", selector: "#phoneNumber", value: "51234567" });
-    expect(actions).toContainEqual({ type: "fill", scope: "auth", selector: "#code", value: "654321" });
+    expect(actions).toContainEqual({
+      type: "goto",
+      url: "https://www.codebuddy.cn/login/?platform=admin&state=0",
+    });
+    expect(actions).toContainEqual({ type: "check", scope: "page", selector: "input[type='checkbox']" });
+    expect(actions).toContainEqual({ type: "click", scope: "page", selector: ".kc-country-option:has-text('+852')" });
+    expect(actions).toContainEqual({ type: "fill", scope: "page", selector: "#phoneNumber", value: "51234567" });
+    expect(actions).toContainEqual({ type: "fill", scope: "page", selector: "#code", value: "654321" });
   });
 
-  it("fills a Chinese phone login form when the phone field is in the outer dialog frame", async () => {
+    it.skip("fills a Chinese phone login form when the phone field is in the outer dialog frame (obsolete: no iframe)", async () => {
     const actions = [];
     const visibleSelectors = {
       page: new Set(["button.btn-login"]),
@@ -652,7 +387,7 @@ describe("CodeBuddy CN phone import", () => {
     });
   });
 
-  it("continues when the CodeBuddy login dialog already shows the phone form without a method tab", async () => {
+  it.skip("continues when the CodeBuddy login dialog already shows the phone form without a method tab (obsolete: no iframe)", async () => {
     const actions = [];
     const visibleSelectors = {
       page: new Set(["button.btn-login"]),

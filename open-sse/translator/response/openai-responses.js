@@ -64,7 +64,7 @@ export function openaiToOpenAIResponsesResponse(chunk, state) {
 
   // Handle reasoning across vendor shapes (reasoning_content / reasoning / reasoning_details)
   const reasoningText = extractReasoningText(delta);
-  if (reasoningText) {
+  if (reasoningText && !state.suppressResponsesReasoning) {
     startReasoning(state, emit, idx);
     emitReasoningDelta(state, emit, reasoningText);
   }
@@ -100,7 +100,7 @@ export function openaiToOpenAIResponsesResponse(chunk, state) {
   }
 
   // Handle tool_calls
-  if (delta.tool_calls) {
+  if (Array.isArray(delta.tool_calls) && delta.tool_calls.length > 0) {
     closeMessage(state, emit, idx);
     for (const tc of delta.tool_calls) {
       emitToolCall(state, emit, tc);
@@ -209,6 +209,10 @@ function emitTextContent(state, emit, idx, content) {
     });
   }
 
+  if (!state.msgTextBuf[idx]) state.msgTextBuf[idx] = "";
+  state.msgTextBuf[idx] += content;
+  if (state.coalesceResponsesText) return;
+
   emit("response.output_text.delta", {
     type: "response.output_text.delta",
     item_id: `msg_${state.responseId}_${idx}`,
@@ -217,9 +221,6 @@ function emitTextContent(state, emit, idx, content) {
     delta: content,
     logprobs: []
   });
-
-  if (!state.msgTextBuf[idx]) state.msgTextBuf[idx] = "";
-  state.msgTextBuf[idx] += content;
 }
 
 function closeMessage(state, emit, idx) {
@@ -227,6 +228,17 @@ function closeMessage(state, emit, idx) {
     state.msgItemDone[idx] = true;
     const fullText = state.msgTextBuf[idx] || "";
     const msgId = `msg_${state.responseId}_${idx}`;
+
+    if (state.coalesceResponsesText && fullText) {
+      emit("response.output_text.delta", {
+        type: "response.output_text.delta",
+        item_id: msgId,
+        output_index: parseInt(idx),
+        content_index: 0,
+        delta: fullText,
+        logprobs: []
+      });
+    }
 
     emit("response.output_text.done", {
       type: "response.output_text.done",

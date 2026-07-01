@@ -18,9 +18,21 @@ const DEFAULT_COUNT = 1;
 const MAX_COUNT = 8;
 const OTP_POLL_TIMEOUT_MS = 150_000;
 const OTP_POLL_INTERVAL_MS = 5_000;
+const MAX_PHONE_NUMBER_ATTEMPTS = 5;
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetryableOtpError(error) {
+  if (/Timed out waiting for 5sim OTP code|5sim returned no OTP code/i.test(error?.message || "")) return true;
+  const status = Number(error?.status || 0);
+  if (!status || status === 408 || status === 425 || status === 429 || status >= 500) return true;
+  return false;
+}
+
+function isFiveSimCooldownError(error) {
+  return error?.code === "FIVE_SIM_COOLDOWN" || Number(error?.status || 0) === 444;
 }
 
 function clampCount(value) {
@@ -98,7 +110,9 @@ export class CodeBuddyCnPhoneImportManager extends KiroBulkImportManager {
       return;
     }
 
-    const { context, page } = await createFreshContext(browser);
+    const fresh = await createFreshContext(browser);
+    const { context } = fresh;
+    let page = fresh.page;
     const workerProxyUrl = browser.__ninerouterProxyUrl || job.proxyUrl || null;
     account.runtimeSession = { context, page, proxyUrl: workerProxyUrl };
     const fiveSim = this.fiveSimClientFactory({ token: account.password, proxyUrl: workerProxyUrl });
@@ -109,27 +123,68 @@ export class CodeBuddyCnPhoneImportManager extends KiroBulkImportManager {
       const country = fiveSimConfig.country || "hongkong";
       const operator = fiveSimConfig.operator || "any";
       const product = fiveSimConfig.product || "codebuddy";
-      this.setAccountStep(
-        account,
-        "buying_5sim_number",
-        `Buying 5sim ${product} number in ${country} (${operator === "any" ? "auto operator" : operator})`
-      );
-      await this.persistJobSnapshot(job, { forcePreview: true });
-      order = await fiveSim.buyActivation(fiveSimConfig);
-      account.email = order.phone || account.email;
+      let loginResult = null;
+      let attempt = 1;
+      while (!job.cancelRequested && (workerProxyUrl || attempt <= MAX_PHONE_NUMBER_ATTEMPTS)) {
+        try {
+          this.setAccountStep(
+            account,
+            "buying_5sim_number",
+            `Buying 5sim ${product} number in ${country} (${operator === "any" ? "any operator" : operator})${attempt > 1 ? `, attempt ${attempt}` : ""}`
+          );
+          await this.persistJobSnapshot(job, { forcePreview: true });
+          order = await fiveSim.buyActivation(fiveSimConfig);
+          account.email = order.phone || account.email;
 
-      const loginResult = await this.phoneLogin({
-        page,
-        phone: order.phone,
-        codeProvider: () => fiveSim.waitForCode(order.id, {
-          timeoutMs: OTP_POLL_TIMEOUT_MS,
-          pollIntervalMs: OTP_POLL_INTERVAL_MS,
-        }),
-        onStep: (step, message) => {
-          this.setAccountStep(account, step, message);
-          void this.persistJobSnapshot(job, { forcePreview: false });
-        },
-      });
+          loginResult = await this.phoneLogin({
+            page,
+            phone: order.phone,
+            codeProvider: () => fiveSim.waitForCode(order.id, {
+              timeoutMs: OTP_POLL_TIMEOUT_MS,
+              pollIntervalMs: OTP_POLL_INTERVAL_MS,
+            }),
+            onStep: (step, message) => {
+              this.setAccountStep(account, step, message);
+              void this.persistJobSnapshot(job, { forcePreview: false });
+            },
+          });
+          break;
+        } catch (error) {
+          if (error.status === "needs_manual") throw error;
+          if (order?.id) await fiveSim.cancelOrder(order.id).catch(() => null);
+          order = null;
+          if (!workerProxyUrl) {
+            if (isFiveSimCooldownError(error)) {
+              error.step = "five_sim_cooldown";
+              error.message = error.message || "5sim temporarily banned this IP/API key; wait 10 minutes before retrying.";
+              throw error;
+            }
+            if (!isRetryableOtpError(error) || attempt >= MAX_PHONE_NUMBER_ATTEMPTS) throw error;
+            this.setAccountStep(account, "retrying_5sim_number", `OTP did not arrive, buying a fresh 5sim number (${attempt + 1}/${MAX_PHONE_NUMBER_ATTEMPTS})`);
+          } else {
+            this.setAccountStep(
+              account,
+              "retrying_5sim_proxy_route",
+              `Automation failed through the configured rotating proxy; retrying until success (attempt ${attempt + 1})`
+            );
+          }
+          await page.close?.().catch(() => null);
+          page = await context.newPage();
+          account.runtimeSession = { context, page, proxyUrl: workerProxyUrl };
+          attempt += 1;
+        }
+      }
+
+      if (job.cancelRequested) {
+        this.finalizeAccount(account, "cancelled", {
+          error: "Job cancelled",
+          step: "cancelled",
+          message: "Job cancelled while retrying CodeBuddy CN phone automation",
+        });
+        return;
+      }
+
+      if (!loginResult) throw new Error("CodeBuddy CN phone login did not complete");
 
       const keyMeta = await this.createApiKey(page, (step, message) => {
         this.setAccountStep(account, step, message);

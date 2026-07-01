@@ -39,6 +39,34 @@ function buildResolvedProxy(proxyUrls, source) {
   };
 }
 
+export function applyBulkImportProxyMode(resolvedProxy, proxyModePreference) {
+  const proxyUrls = Array.isArray(resolvedProxy?.proxyUrls) ? resolvedProxy.proxyUrls : [];
+  const fallbackUrl = resolvedProxy?.proxyUrl || proxyUrls[0] || null;
+  const preference = String(proxyModePreference || "auto").trim().toLowerCase();
+
+  if (preference === "single") {
+    const singleUrl = fallbackUrl || null;
+    return {
+      ...resolvedProxy,
+      proxyUrl: singleUrl,
+      proxyUrls: singleUrl ? [singleUrl] : [],
+      proxyMode: singleUrl ? "single" : "none",
+    };
+  }
+
+  if (preference === "round-robin") {
+    const urls = proxyUrls.length ? proxyUrls : (fallbackUrl ? [fallbackUrl] : []);
+    return {
+      ...resolvedProxy,
+      proxyUrl: urls[0] || null,
+      proxyUrls: urls,
+      proxyMode: urls.length ? "round-robin" : "none",
+    };
+  }
+
+  return resolvedProxy;
+}
+
 /**
  * Resolve a launchable proxy URL from bulk-import request body.
  *

@@ -67,6 +67,9 @@ async function fetchJob(provider, jobId) {
 
 async function fetchLatestJob(provider, scope = "recoverable") {
   const res = await fetch(`/api/oauth/${provider}/bulk-import/latest?scope=${encodeURIComponent(scope)}`, { cache: "no-store" });
+  if (res.status === 404 || !res.ok) {
+    return { res, data: { success: false, job: null, recoverable: false } };
+  }
   const data = await readJsonResponse(res, "Failed to fetch latest bulk login job");
   return { res, data };
 }

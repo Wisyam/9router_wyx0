@@ -42,6 +42,7 @@ export { default as CodeBuddyCnPhoneAutomationModal } from "./CodeBuddyCnPhoneAu
 export { default as CodeBuddyQuotaCookieModal } from "./CodeBuddyQuotaCookieModal";
 export { default as MergeConnectionsModal } from "./MergeConnectionsModal";
 export { default as Pagination } from "./Pagination";
+export { default as AutoclawAutomationModal } from "./AutoclawAutomationModal";
 
 // Layouts
 export * from "./layouts";

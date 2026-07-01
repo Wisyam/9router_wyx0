@@ -19,6 +19,7 @@ import { XiaomiTokenplanExecutor } from "./xiaomi-tokenplan.js";
 import { MimoFreeExecutor } from "./mimo-free.js";
 import { CodeBuddyExecutor } from "./codebuddy-cn.js";
 import { CodeBuddyGlobalExecutor } from "./codebuddy.js";
+import { AutoclawExecutor } from "./autoclaw.js";
 import { DefaultExecutor } from "./default.js";
 
 const executors = {
@@ -46,6 +47,7 @@ const executors = {
   mmf: new MimoFreeExecutor(), // Alias for mimo-free
   "codebuddy-cn": new CodeBuddyExecutor(),
   codebuddy: new CodeBuddyGlobalExecutor(),
+  autoclaw: new AutoclawExecutor(),
 };
 
 const defaultCache = new Map();
@@ -83,3 +85,4 @@ export { XiaomiTokenplanExecutor } from "./xiaomi-tokenplan.js";
 export { MimoFreeExecutor } from "./mimo-free.js";
 export { CodeBuddyExecutor } from "./codebuddy-cn.js";
 export { CodeBuddyGlobalExecutor } from "./codebuddy.js";
+export { AutoclawExecutor } from "./autoclaw.js";

@@ -27,12 +27,22 @@ const SPECIALIZED = new Set([
 function sanitize(headers) {
   const out = {};
   for (const [k, v] of Object.entries(headers)) {
-    out[k] = typeof v === "string"
-      ? v.replace(/Bearer .+/, "Bearer <TOK>")
-          .replace(/sk-test-APIKEY|tok-test-ACCESS/g, "<CRED>")
-          .replace(/kimi-\d{10,}/g, "kimi-<TS>")
-          .replace(/\b[0-9a-f]{32}\b/g, "<ID>")
-      : v;
+    if (typeof v !== "string") {
+      out[k] = v;
+      continue;
+    }
+    if (k === "User-Agent" && v.startsWith("9Router/")) {
+      out[k] = "9Router/<VERSION>";
+      continue;
+    }
+    if (["X-CLIENT-VERSION", "X-CORE-VERSION", "X-PLATFORM", "X-PLATFORM-VERSION", "X-Msh-Device-Model"].includes(k)) {
+      out[k] = `<${k}>`;
+      continue;
+    }
+    out[k] = v.replace(/Bearer .+/, "Bearer <TOK>")
+      .replace(/sk-test-APIKEY|tok-test-ACCESS/g, "<CRED>")
+      .replace(/kimi-\d{10,}/g, "kimi-<TS>")
+      .replace(/\b[0-9a-f]{32}\b/g, "<ID>");
   }
   return out;
 }

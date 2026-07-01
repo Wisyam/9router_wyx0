@@ -14,6 +14,7 @@ import {
   refreshCodebuddyToken,
   classifyOAuthRefreshError,
 } from "./tokenRefresh/providers.js";
+import { refreshAutoclawToken } from "./tokenRefresh/autoclaw.js";
 
 // Re-export all provider refresh functions (preserves public API for all consumers)
 export {
@@ -132,7 +133,8 @@ const REFRESH_HANDLERS = {
   "codebuddy-cn": (c, log) => refreshCodebuddyToken(c.refreshToken, log),
   codebuddy: (c, log) => refreshCodebuddyToken(c.refreshToken, log, "codebuddy"),
   vertex: vertexRefreshHandler,
-  "vertex-partner": vertexRefreshHandler
+  "vertex-partner": vertexRefreshHandler,
+  autoclaw: (c, log) => refreshAutoclawToken(c, log),
 };
 
 export async function getAccessToken(provider, credentials, log) {

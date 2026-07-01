@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { FiveSimClient } from "@/lib/oauth/services/fiveSimClient";
 import {
+  applyBulkImportProxyMode,
   resolveBulkImportProxy,
   splitBulkImportProxyUrls,
 } from "@/lib/oauth/services/bulkImportProxyResolver";
@@ -10,6 +11,7 @@ import { getProxyPools } from "@/models";
 export const dynamic = "force-dynamic";
 
 const MAX_QUOTE_ATTEMPTS = 8;
+const PROXIED_COOLDOWN_QUOTE_RETRIES = 2;
 const FETCH_PROXY_PROTOCOLS = new Set(["http:", "https:", "socks4:", "socks5:"]);
 
 function parseRequestedCount(value) {
@@ -21,6 +23,10 @@ function parseRequestedCount(value) {
 function isTransientFiveSimError(error) {
   const status = Number(error?.status || 0);
   return !status || status === 408 || status === 425 || status === 429 || status === 444 || status >= 500;
+}
+
+function isFiveSimCooldownError(error) {
+  return error?.code === "FIVE_SIM_COOLDOWN" || Number(error?.status || 0) === 444;
 }
 
 function normalizeProxyUrl(value) {
@@ -141,25 +147,29 @@ async function getQuoteWithFallback({
   let lastError = null;
   for (let index = 0; index < attempts.length; index += 1) {
     const attempt = attempts[index];
-    try {
-      const client = fiveSimClientFactory({ token, proxyUrl: attempt.proxyUrl });
-      const quote = await client.getActivationQuote({
-        country: body?.country,
-        operator: body?.operator,
-        product: body?.product,
-      });
-      return {
-        quote,
-        route: {
-          ...attempt,
-          attemptedRoutes: index + 1,
-          fallbackUsed: index > 0,
-          totalRoutes: attempts.length,
-        },
-      };
-    } catch (error) {
-      lastError = error;
-      if (!isTransientFiveSimError(error)) throw error;
+    const routeAttempts = attempt.proxyUrl ? PROXIED_COOLDOWN_QUOTE_RETRIES : 1;
+    for (let routeAttempt = 1; routeAttempt <= routeAttempts; routeAttempt += 1) {
+      try {
+        const client = fiveSimClientFactory({ token, proxyUrl: attempt.proxyUrl });
+        const quote = await client.getActivationQuote({
+          country: body?.country,
+          operator: body?.operator,
+          product: body?.product,
+        });
+        return {
+          quote,
+          route: {
+            ...attempt,
+            attemptedRoutes: index + 1,
+            fallbackUsed: index > 0 || routeAttempt > 1,
+            totalRoutes: attempts.length,
+          },
+        };
+      } catch (error) {
+        lastError = error;
+        if (!isTransientFiveSimError(error)) throw error;
+        if (!isFiveSimCooldownError(error) || routeAttempt >= routeAttempts) break;
+      }
     }
   }
   const error = new Error(`5sim check failed after ${attempts.length} route${attempts.length === 1 ? "" : "s"}: ${lastError?.message || "unknown error"}`);
@@ -175,10 +185,11 @@ export async function POST(request) {
       return NextResponse.json({ error: "5sim API token is required" }, { status: 400 });
     }
 
-    const resolvedProxy = await resolveBulkImportProxy({
+    const resolvedProxyBase = await resolveBulkImportProxy({
       proxyPoolId: body?.proxyPoolId,
       proxyUrl: body?.proxyUrl,
     });
+    const resolvedProxy = applyBulkImportProxyMode(resolvedProxyBase, body?.proxyMode);
     const { error: proxyError } = resolvedProxy;
     if (proxyError) {
       return NextResponse.json({ error: proxyError }, { status: 400 });
@@ -214,5 +225,6 @@ export async function POST(request) {
 export const __test__ = {
   buildQuoteAttempts,
   getQuoteWithFallback,
+  isFiveSimCooldownError,
   isTransientFiveSimError,
 };

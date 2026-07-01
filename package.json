@@ -10,6 +10,7 @@
     "dev:bun": "bun --bun next dev --webpack --port 20128",
     "build:bun": "bun --bun next build --webpack",
     "start:bun": "bun ./.next/standalone/server.js",
+    "providers:registry": "node ./scripts/generate-provider-registry-index.mjs",
     "cli:pack": "npm --prefix cli run pack:cli",
     "cli:publish": "npm --prefix cli run publish:cli",
     "postinstall": "node cli/hooks/postinstall.js"

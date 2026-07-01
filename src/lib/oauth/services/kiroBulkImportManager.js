@@ -265,7 +265,11 @@ export function buildLookupResponse(job, extras = {}) {
 
 async function defaultBrowserLauncher(job) {
   const { launchBulkImportBrowser } = await import("./bulkImportBrowserEngine.js");
-  return launchBulkImportBrowser({ engine: job?.engine || "chromium", proxyUrl: job?.proxyUrl || undefined });
+  return launchBulkImportBrowser({
+    engine: job?.engine || "chromium",
+    proxyUrl: job?.proxyUrl || undefined,
+    args: ["--disable-blink-features=AutomationControlled"],
+  });
 }
 
 function normalizeProxyUrls(proxyUrl, proxyUrls) {
@@ -285,7 +289,11 @@ async function defaultSocialExchange(args) {
 }
 
 export async function createFreshContext(browser) {
-  const context = await browser.newContext();
+  const context = await browser.newContext({
+    userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    viewport: { width: 1280, height: 800 },
+    locale: "zh-CN",
+  });
   const page = await context.newPage();
   return { context, page };
 }

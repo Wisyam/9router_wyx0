@@ -17,6 +17,11 @@ const PROVIDER = "codebuddy-cn";
 const DEFAULT_ENGINE = "chromium";
 const ACTIVE_STATUSES = new Set(["queued", "running", "needs_manual"]);
 const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
+const PROXY_MODE_OPTIONS = [
+  { value: "auto", label: "Auto" },
+  { value: "single", label: "Single / Provider rotating" },
+  { value: "round-robin", label: "Round Robin" },
+];
 
 function formatStep(value) {
   return String(value || "waiting").replaceAll("_", " ");
@@ -85,6 +90,7 @@ export default function CodeBuddyCnPhoneAutomationModal({ isOpen, onClose, onSuc
   const [product, setProduct] = useState("codebuddy");
   const [proxyPoolId, setProxyPoolId] = useState("");
   const [proxyUrl, setProxyUrl] = useState("");
+  const [proxyMode, setProxyMode] = useState("auto");
   const [proxyPools, setProxyPools] = useState([]);
   const [job, setJob] = useState(null);
   const [error, setError] = useState("");
@@ -97,8 +103,9 @@ export default function CodeBuddyCnPhoneAutomationModal({ isOpen, onClose, onSuc
   const terminal = job && TERMINAL_STATUSES.has(job.status);
   const requestedCount = Math.min(Number.parseInt(count, 10) || 1, 8);
   const hasUsableFiveSimToken = fiveSimToken.trim().length >= 24;
+  const hasProxyRoute = Boolean(proxyPoolId || proxyUrl.trim());
   const quotePending = hasUsableFiveSimToken && !fiveSimQuote && !quoteError && !job;
-  const quoteBlocksStart = quoteChecking || quotePending || Boolean(quoteError) || fiveSimQuote?.canAffordRequested === false;
+  const quoteBlocksStart = quoteChecking || quotePending || (!hasProxyRoute && Boolean(quoteError)) || fiveSimQuote?.canAffordRequested === false;
   const startDisabled = starting || !hasUsableFiveSimToken || quoteBlocksStart;
   const manualAccounts = useMemo(() => (
     (job?.accounts || []).filter((account) => account.manualSessionAvailable)
@@ -190,6 +197,7 @@ export default function CodeBuddyCnPhoneAutomationModal({ isOpen, onClose, onSuc
           country,
           operator,
           product,
+          proxyMode,
         };
         if (proxyPoolId) {
           body.proxyPoolId = proxyPoolId;
@@ -212,7 +220,7 @@ export default function CodeBuddyCnPhoneAutomationModal({ isOpen, onClose, onSuc
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [count, country, fiveSimToken, isOpen, job, operator, product, proxyPoolId, proxyUrl]);
+  }, [count, country, fiveSimToken, isOpen, job, operator, product, proxyMode, proxyPoolId, proxyUrl]);
 
   const startJob = async () => {
     setStarting(true);
@@ -224,6 +232,7 @@ export default function CodeBuddyCnPhoneAutomationModal({ isOpen, onClose, onSuc
         country,
         operator,
         product,
+        proxyMode,
         concurrency: Math.min(Number.parseInt(count, 10) || 1, 4),
         engine: DEFAULT_ENGINE,
       };
@@ -413,7 +422,7 @@ export default function CodeBuddyCnPhoneAutomationModal({ isOpen, onClose, onSuc
 
             <div>
               <label className="mb-2 block text-sm font-medium">Network Proxy (optional)</label>
-              <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid gap-4 sm:grid-cols-3">
                 <div>
                   <label className="mb-1 block text-xs text-text-muted">Proxy Pool</label>
                   <select
@@ -442,9 +451,21 @@ export default function CodeBuddyCnPhoneAutomationModal({ isOpen, onClose, onSuc
                     placeholder="http://user:pass@host:port"
                   />
                 </div>
+                <div>
+                  <label className="mb-1 block text-xs text-text-muted">Proxy Strategy</label>
+                  <select
+                    value={proxyMode}
+                    onChange={(event) => setProxyMode(event.target.value)}
+                    className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                  >
+                    {PROXY_MODE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
               <p className="mt-1 text-xs text-text-muted">
-                HTTP/SOCKS pools are shown here. Put multiple proxies in a pool or custom field separated by newline/comma; workers rotate them round-robin.
+                Auto matches provider routing: one URL stays single, multiple URLs rotate round-robin. Choose Round Robin for proxy lists or a provider-managed rotating endpoint that should keep retrying through proxy routes.
               </p>
             </div>
           </>
