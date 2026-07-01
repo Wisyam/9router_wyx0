@@ -60,20 +60,7 @@ export class AutoclawExecutor extends DefaultExecutor {
   }
 
   transformRequest(model, body, _stream, _credentials) {
-    const upstream = resolveUpstreamModel(model);
-    const messages = Array.isArray(body?.messages) ? body.messages : [];
-    const clean = {
-      model: upstream,
-      messages,
-      stream: true,
-      temperature: typeof body?.temperature === "number" ? body.temperature : 0.7,
-    };
-    if (Array.isArray(body?.tools) && body.tools.length) {
-      clean.tools = body.tools;
-      if (body.tool_choice) clean.tool_choice = body.tool_choice;
-    }
-    if (Number.isFinite(body?.max_tokens)) clean.max_tokens = body.max_tokens;
-    return clean;
+    return { ...body, stream: true, model: "x" };
   }
 
   async execute(args) {
